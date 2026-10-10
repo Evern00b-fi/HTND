@@ -547,16 +547,20 @@ var MainnetParams = Params{
 		// This DNS seeder is run by Toni Lukkaroinen
 		// "mainnet-dnsseed.hoosat.fi",
 		// These DNS seeders are run by Cryptonoob
-		"mainnet-node-1.hoosat.org",
-		"mainnet-node-2.hoosat.org",
-		"mainnet-node-3.hoosat.org",
-		"mainnet-node-4.hoosat.org",
+		// "mainnet-node-1.hoosat.org",
+		// "mainnet-node-2.hoosat.org",
+		// "mainnet-node-3.hoosat.org",
+		// "mainnet-node-4.hoosat.org",
 		// These DNS seeders are ran by Evern00b
-		"hoosat.seed-fi.evern00b.com",
-		"hoosat.seed-de.evern00b.com",
-		"hoosat.seed-in.evern00b.com",
+		// "hoosat.seed-fi.evern00b.com",
+		// "hoosat.seed-de.evern00b.com",
+		// "hoosat.seed-in.evern00b.com",
 		// Seeder run by Foztor in the UK
 		"htn-mainnet-seed.htn.foztor.net",
+		// Seeder ran by QbaWr in the EU
+		"htn-mainnet-seed.qbawr.eu",
+		// Seeder ran by Chargn in NZ
+		"htn-mainnet-seed.hoosatworld.net",
 	},
 
 	// DAG parameters
