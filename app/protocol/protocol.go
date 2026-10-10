@@ -123,7 +123,7 @@ func registerFlowsForProtocol(m *Manager, netConnection *netadapter.NetConnectio
 func (m *Manager) handleError(err error, netConnection *netadapter.NetConnection, outgoingRoute *routerpkg.Route) {
 	netConnection.ErrorMessage = err
 	if protocolErr := (protocolerrors.ProtocolError{}); errors.As(err, &protocolErr) {
-		if m.context.Config().EnableBanning && protocolErr.ShouldBan {
+		if protocolErr.ShouldBan && (m.context.Config().EnableBanning || protocolErr.ForceBan) {
 			log.Warnf("Banning %s (reason: %s)", netConnection, protocolErr.Cause)
 			err := m.context.ConnectionManager().Ban(netConnection)
 			if err != nil && !errors.Is(err, connmanager.ErrCannotBanPermanent) {

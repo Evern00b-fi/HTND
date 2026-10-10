@@ -175,15 +175,15 @@ func (csm *consensusStateManager) verifyUTXO(stagingArea *model.StagingArea, blo
 	}
 	// No tolerantion allowed
 	if coinbaseErr != nil && errors.Is(coinbaseErr, ruleerrors.ErrBadCoinbaseTransaction) {
-	if strictCoinbase {
-		coinbaseErr = notTolerable{coinbaseErr}   // exact match, never excused
-	} else if tolerate && csm.offsetModeValueChecksActive(block.Header.DAAScore()) {
-		if boundedErr := csm.checkCoinbaseOnOffsetBaseline(stagingArea, block, blockHash, coinbaseTransaction,
-			acceptanceData, strictCoinbase); boundedErr != nil {
-			coinbaseErr = boundedErr
+		if strictCoinbase {
+			coinbaseErr = notTolerable{coinbaseErr} // exact match, never excused
+		} else if tolerate && csm.offsetModeValueChecksActive(block.Header.DAAScore()) {
+			if boundedErr := csm.checkCoinbaseOnOffsetBaseline(stagingArea, block, blockHash, coinbaseTransaction,
+				acceptanceData, strictCoinbase); boundedErr != nil {
+				coinbaseErr = boundedErr
+			}
 		}
 	}
-}
 
 	if stop("coinbase-transaction", coinbaseErr) {
 		return firstError

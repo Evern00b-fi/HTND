@@ -9,7 +9,21 @@ import (
 // of the peer-to-peer protocol
 type ProtocolError struct {
 	ShouldBan bool
+	ForceBan  bool
 	Cause     error
+}
+
+// WrapForcedBan wraps err as a protocol error that bans the peer regardless of --enablebanning.
+func WrapForcedBan(err error, message string) error {
+	return ProtocolError{ShouldBan: true, ForceBan: true, Cause: errors.Wrap(err, message)}
+}
+
+// ConvertToForcedBanIfRuleError is ConvertToBanningProtocolErrorIfRuleError with ForceBan set.
+func ConvertToForcedBanIfRuleError(err error, message string) error {
+	if !errors.As(err, &ruleerrors.RuleError{}) {
+		return err
+	}
+	return WrapForcedBan(err, message)
 }
 
 func (e ProtocolError) Error() string {
