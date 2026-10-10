@@ -472,45 +472,7 @@ func (csm *consensusStateManager) maybeAcceptTransaction(
 				resolvedInputs++
 			}
 		}
-		inheritsOffset := csm.blockInheritsKnownUTXOCommitmentOffset(stagingArea, blockHash)
-		if acceptDespiteMissingInputs(err, inheritsOffset, resolvedInputs) {
-			// Below block version 11 (HardForkGates.OffsetModeValueChecksVersion) this path takes the
-			// transaction on trust: fee 0, no checks, every output created. From it the found inputs must pass
-			// every check they can decide and the outputs may not exceed them - see
-			// offset_value_checks.go. A failure is an ordinary consensus rejection of the transaction.
-			ruleErr, validationErr := checkMissingInputAcceptance(csm.transactionValidator, stagingArea,
-				transaction, blockHash, blockDAAScore, csm.offsetModeValueChecksActive(blockDAAScore))
-			if validationErr != nil {
-				return false, 0, nil, errors.Wrapf(validationErr, "failed to validate transaction %s in "+
-					"block %s on the missing-input path", transactionID, blockHash)
-			}
-			if ruleErr != nil {
-				logTransactionVerdict("rejected: missing inputs and its found inputs fail validation",
-					verdictContext, transaction, transactionID, ruleErr, "offset-mode value checks active (block version >= 11)")
-				return false, accumulatedMassBefore, newTransactionRejection("rule-error", ruleErr), nil
-			}
-			err = accumulatedUTXODiff.AddOutputsSpendingResolvedInputs(transaction, utxo.AcceptedUTXOBlockDAAScore(blockDAAScore))
-			if err != nil {
-				return false, 0, nil, errors.Wrapf(err, "failed to add outputs of transaction %s in block %s "+
-					"after a missing input", transactionID, blockHash)
-			}
-			csm.journalMissingInputVerdict(stagingArea, blockHash, mergeSetBlockHash, transaction, transactionID,
-				true, inheritsOffset, resolvedInputs)
-			noteSpentInputs(spentInPass, transaction)
-			log.Debugf("Transaction %s in block %s spends coins this set does not hold; its outputs are "+
-				"kept so the gap does not spread", transactionID, blockHash)
-			logTransactionVerdict("accepted despite missing inputs", verdictContext, transaction, transactionID,
-				err, "block inherits a known UTXO commitment offset")
-			return true, accumulatedMassBefore, nil, nil
-		}
-		// Journal only the rejections the local offset state decided: the ones a node with inheritsOffset=true
-		// would have accepted. Double spends and zero-resolved-input copies are rejected by every node alike.
-		if acceptDespiteMissingInputs(err, true, resolvedInputs) {
-			csm.journalMissingInputVerdict(stagingArea, blockHash, mergeSetBlockHash, transaction, transactionID,
-				false, inheritsOffset, resolvedInputs)
-		}
-		logTransactionVerdict("rejected: unresolved inputs", verdictContext, transaction, transactionID, err,
-			fmt.Sprintf("inherits known UTXO commitment offset: %t", inheritsOffset))
+		// inheritsOffset := csm.blockInheritsKnownUTXOCommitmentOffset(stagingArea, blockHash)
 		return false, accumulatedMassBefore, newTransactionRejection("missing-input", err), nil
 	}
 
