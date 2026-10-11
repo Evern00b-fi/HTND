@@ -553,8 +553,8 @@ var MainnetParams = Params{
 		// "mainnet-node-4.hoosat.org",
 		// These DNS seeders are ran by Evern00b
 		// "hoosat.seed-fi.evern00b.com",
-		// "hoosat.seed-de.evern00b.com",
-		// "hoosat.seed-in.evern00b.com",
+		"hoosat.seed-eu.evern00b.com",
+		"hoosat.seed-in.evern00b.com",
 		// Seeder run by Foztor in the UK
 		"htn-mainnet-seed.htn.foztor.net",
 		// Seeder ran by QbaWr in the EU
