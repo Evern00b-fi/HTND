@@ -168,6 +168,17 @@ func (c *ConnectionManager) BanByIP(ip net.IP) error {
 
 // IsBanned returns whether the given netConnection is banned
 func (c *ConnectionManager) IsBanned(netConnection *netadapter.NetConnection) (bool, error) {
+	// Hardcoded bans apply even to permanent (--connect / --addpeer) peers.
+	// This saves us from downloading the UTXO set on IBD to find it's no good
+	// When we _know_ these IPs are serving up an incompatible chain.
+	// Foztor October 11 2027
+	if ips, err := c.extractAddressIPs(netConnection.Address()); err == nil {
+		for _, ip := range ips {
+			if addressmanager.IsHardcodedBan(ip) {
+				return true, nil
+			}
+		}
+	}
 	if c.isPermanent(netConnection.Address()) {
 		return false, nil
 	}

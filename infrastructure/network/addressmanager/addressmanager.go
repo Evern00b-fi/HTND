@@ -412,3 +412,7 @@ func (am *AddressManager) banHardcodedIPs() error {
 	}
 	return nil
 }
+
+func IsHardcodedBan(ip net.IP) bool {
+	return isHardcodedBan(ip)
+}
