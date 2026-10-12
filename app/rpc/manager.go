@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"sync"
 	"time"
 
 	"github.com/HoosatNetwork/HTND/v2/app/appmessage"
@@ -26,6 +27,12 @@ type Manager struct {
 	// consensusEventsHandlerDone is closed when the consensus events handler has exited, after handling every event
 	// queued before the events channel was closed.
 	consensusEventsHandlerDone chan struct{}
+
+	// handlersLock guards handlersStopped and every handlersRunning.Add, so no request handler starts once
+	// StopRequestHandlers has begun waiting.
+	handlersLock    sync.Mutex
+	handlersStopped bool
+	handlersRunning sync.WaitGroup
 }
 
 // NewManager creates a new RPC Manager
@@ -109,6 +116,41 @@ func (m *Manager) WaitForConsensusEventsHandler(timeout time.Duration) bool {
 	case <-time.After(timeout):
 		return false
 	}
+}
+
+// StopRequestHandlers drops requests that arrive from now on without handling them, and waits until the request
+// handlers already running have returned, or until timeout. It reports whether they all returned.
+//
+// Shutdown closes the database right after the component manager stops, and stopping the net adapter closes the
+// RPC connections but does not wait for their handlers. A handler still running then - one iterating the block store,
+// say - used a database cursor that the database close was closing under it.
+func (m *Manager) StopRequestHandlers(timeout time.Duration) bool {
+	m.handlersLock.Lock()
+	m.handlersStopped = true
+	m.handlersLock.Unlock()
+
+	returned := make(chan struct{})
+	spawn("StopRequestHandlers", func() {
+		m.handlersRunning.Wait()
+		close(returned)
+	})
+	select {
+	case <-returned:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// startRequestHandler registers a request handler as running, unless StopRequestHandlers was called.
+func (m *Manager) startRequestHandler() bool {
+	m.handlersLock.Lock()
+	defer m.handlersLock.Unlock()
+	if m.handlersStopped {
+		return false
+	}
+	m.handlersRunning.Add(1)
+	return true
 }
 
 // notifyBlockAddedToDAG notifies the manager that a block has been added to the DAG
