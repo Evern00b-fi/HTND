@@ -766,7 +766,7 @@ var TestnetParams = Params{
 	Net:         appmessage.Testnet,
 	RPCPort:     "42422",
 	DefaultPort: "42423",
-	DNSSeeds: []string{
+	DNSSeeds:    []string{
 		// This DNS seeder is run by Toni Lukkaroinen
 		// "mainnet-dnsseed.hoosat.fi",
 		// These DNS seeders are run by Cryptonoob

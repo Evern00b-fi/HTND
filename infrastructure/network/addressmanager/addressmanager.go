@@ -48,6 +48,8 @@ var hardcodedBannedIPs = []string{
 	"95.164.5.153",
 	"77.91.74.212",
 	"194.156.98.115",
+	"188.146.134.67",
+	"80.55.104.105",
 }
 
 func isHardcodedBan(ip net.IP) bool {
