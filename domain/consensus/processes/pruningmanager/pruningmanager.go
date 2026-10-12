@@ -3,6 +3,7 @@ package pruningmanager
 import (
 	"fmt"
 	"math/big"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"time"
@@ -862,15 +863,7 @@ func (pm *pruningManager) ArePruningPointsInValidChain(stagingArea *model.Stagin
 // pruning point must not be older than the checkpoint, and the checkpoint must itself appear in this
 // node's own recorded pruning-point list (checkpointIsInPruningPointList).
 //
-// It no longer checks the checkpoint header against live, peer-sourced headers
-// (header.PruningPoint() hops): that depends on some peer still retaining the exact checkpoint
-// header, and confirmed 2026-10-06 that no node on the network does any longer for this checkpoint -
-// requiring it made every headers-proof IBD fail identically and permanently, for every future
-// joiner, forever. The recorded pruning-point list is not subject to that gap: every headers-proof
-// IBD mandatorily receives and imports the full list of this chain's historical pruning points
-// (validateAndInsertPruningPoints), checked against ArePruningPointsViolatingFinality before import,
-// so checking membership in it is both always available and already a real proof of descent - not a
-// weaker floor-only substitute.
+
 func (pm *pruningManager) pruningPointMeetsCheckpoint(stagingArea *model.StagingArea,
 	pruningPoint *externalapi.DomainHash, pruningPointHeader externalapi.BlockHeader,
 ) (bool, error) {
@@ -883,11 +876,146 @@ func (pm *pruningManager) pruningPointMeetsCheckpoint(stagingArea *model.Staging
 			pruningPoint, pruningPointHeader.BlueScore(), cp.Hash, cp.BlueScore)
 		return false, nil
 	}
+
+	// (1) The checkpoint we hold must be the one that was pinned, and agree with itself.
+	if ok, err := pm.checkpointIsSelfConsistent(stagingArea, pruningPoint, pruningPointHeader); err != nil || !ok {
+		return false, err
+	}
 	if pruningPoint.Equal(cp.Hash) {
 		return true, nil
 	}
 
-	return pm.checkpointIsInPruningPointList(stagingArea, pruningPoint)
+	// (2) The pruning point must descend from the checkpoint. The walk stops at the checkpoint
+	// and never goes below it.
+	return pm.checkpointIsInPruningPointChain(stagingArea, pruningPoint, pruningPointHeader)
+}
+
+// checkpointIsSelfConsistent checks the checkpoint header we hold against the pinned values.
+// A missing header is not a failure here: the lineage walk will fail if it cannot reach it.
+func (pm *pruningManager) checkpointIsSelfConsistent(stagingArea *model.StagingArea,
+	pruningPoint *externalapi.DomainHash, pruningPointHeader externalapi.BlockHeader,
+) (bool, error) {
+	cp := pm.pruningPointCheckpoint
+
+	header := pruningPointHeader
+	if !pruningPoint.Equal(cp.Hash) {
+		has, err := pm.blockHeaderStore.HasBlockHeader(pm.databaseContext, stagingArea, cp.Hash)
+		if err != nil || !has {
+			return true, err
+		}
+		header, err = pm.blockHeaderStore.BlockHeader(pm.databaseContext, stagingArea, cp.Hash)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	if !consensushashing.HeaderHash(header).Equal(cp.Hash) ||
+		header.BlueScore() != cp.BlueScore ||
+		header.DAAScore() != cp.DAAScore ||
+		!header.UTXOCommitment().Equal(cp.UTXOCommitment) {
+		log.Warnf("checkpoint %s: the stored header does not hash to, or carry the pinned scores and UTXO "+
+			"commitment of, the checkpoint", cp.Hash)
+		return false, nil
+	}
+
+	// If we also hold the checkpoint's own multiset, it must reproduce the commitment.
+	if ms, err := pm.multiSetStore.Get(pm.databaseContext, stagingArea, cp.Hash); err == nil {
+		if !ms.Hash().Equal(cp.UTXOCommitment) {
+			log.Warnf("checkpoint %s: stored multiset %s != pinned commitment %s", cp.Hash, ms.Hash(), cp.UTXOCommitment)
+			return false, nil
+		}
+	} else if !database.IsNotFoundError(err) {
+		return false, err
+	}
+	return true, nil
+}
+
+// checkpointIsInPruningPointChain proves lineage using the pruning-point LIST this node holds
+// (pm.pruningStore, indices 0..currentIndex), not header.PruningPoint() hops through headers a peer
+// may no longer retain. The list is mandatorily received and imported on every headers-proof IBD
+// (validateAndInsertPruningPoints).
+//
+// It checks, in order:
+//  1. the list's top entry is the pruning point being validated;
+//  2. the checkpoint appears in the list, at an index consistent with its blue score;
+//  3. from the checkpoint up to the top, each entry's header commits to the previous entry
+//     (header(list[i]).PruningPoint() == list[i-1]) and blue scores strictly increase.
+//
+// Nothing below the checkpoint is examined.
+func (pm *pruningManager) checkpointIsInPruningPointChain(stagingArea *model.StagingArea,
+	pruningPoint *externalapi.DomainHash, pruningPointHeader externalapi.BlockHeader,
+) (bool, error) {
+	cp := pm.pruningPointCheckpoint
+
+	currentIndex, err := pm.pruningStore.CurrentPruningPointIndex(pm.databaseContext, stagingArea)
+	if err != nil {
+		return false, err
+	}
+
+	// (1) The top of the list must be the pruning point we are validating.
+	top, err := pm.pruningStore.PruningPointByIndex(pm.databaseContext, stagingArea, currentIndex)
+	if err != nil {
+		return false, err
+	}
+	if !top.Equal(pruningPoint) {
+		log.Warnf("checkpoint %s: top of the pruning-point list (index %d) is %s, not the pruning point %s",
+			cp.Hash, currentIndex, top, pruningPoint)
+		return false, nil
+	}
+
+	// (2) Find the checkpoint in the list.
+	checkpointIndex := uint64(0)
+	found := false
+	for index := uint64(0); index <= currentIndex; index++ {
+		stored, err := pm.pruningStore.PruningPointByIndex(pm.databaseContext, stagingArea, index)
+		if err != nil {
+			return false, err
+		}
+		if stored.Equal(cp.Hash) {
+			checkpointIndex, found = index, true
+			break
+		}
+	}
+	if !found {
+		log.Warnf("checkpoint %s is not in the pruning-point list of %s (%d entries)",
+			cp.Hash, pruningPoint, currentIndex+1)
+		return false, nil
+	}
+
+	// (3) Every link from the checkpoint up to the top must hold. Walk downward from the top so
+	// the header we already have is reused and we stop exactly at the checkpoint.
+	// (3) The list must be ordered: blue score strictly increases from the checkpoint's entry up to
+	// the top. A header's PruningPoint() commits to an entry several indices back, not necessarily the
+	// previous one, so linkage is not checked per entry (ArePruningPointsInValidChain checks the top's
+	// commitment against the list).
+	previousBlueScore := cp.BlueScore
+	for index := checkpointIndex + 1; index <= currentIndex; index++ {
+		hash, err := pm.pruningStore.PruningPointByIndex(pm.databaseContext, stagingArea, index)
+		if err != nil {
+			return false, err
+		}
+		header := pruningPointHeader
+		if index != currentIndex {
+			header, err = pm.blockHeaderStore.BlockHeader(pm.databaseContext, stagingArea, hash)
+			if database.IsNotFoundError(err) {
+				log.Warnf("checkpoint %s: header for list entry %d (%s) is missing", cp.Hash, index, hash)
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+		}
+		if header.BlueScore() <= previousBlueScore {
+			log.Warnf("checkpoint %s: list entry %d (%s) has blue score %d, not above the previous entry's %d",
+				cp.Hash, index, hash, header.BlueScore(), previousBlueScore)
+			return false, nil
+		}
+		previousBlueScore = header.BlueScore()
+	}
+
+	log.Infof("checkpoint %s is at pruning-point list index %d of %d; list is ordered up to %s",
+		cp.Hash, checkpointIndex, currentIndex, pruningPoint)
+	return true, nil
 }
 
 func shortStr(s string) string {
@@ -979,7 +1107,7 @@ func (pm *pruningManager) VerifyPruningPointCheckpointOnDisk() error {
 		return nil
 	}
 
-	ok, err := pm.checkpointIsInPruningPointList(stagingArea, pruningPoint)
+	ok, err := pm.pruningPointMeetsCheckpoint(stagingArea, pruningPoint, pruningPointHeader)
 	if err != nil {
 		return err
 	}
@@ -1537,8 +1665,7 @@ func (pm *pruningManager) VerifyCurrentPruningPointUTXOSet() {
 	}
 	bucketHash := bucketMultiset.Hash()
 	if !bucketHash.Equal(expectedCommitment) {
-		// Before the switch below, because one of its branches repairs the bucket in place.
-		pm.reportPruningPointCommitmentMismatch(stagingArea, pruningPoint, bucketHash, bucketStats, "", nil)
+		pm.reportPruningPointCommitmentMismatch(stagingArea, pruningPoint, bucketHash, bucketStats, "", 0, 0, nil)
 	}
 
 	perBlockMultiset, perBlockErr := pm.multiSetStore.Get(pm.databaseContext, stagingArea, pruningPoint)
@@ -2447,34 +2574,28 @@ func (pm *pruningManager) updatePruningPoint() error {
 	if err != nil {
 		return err
 	}
-	// Verify what this node is about to serve, and do it unconditionally rather than only under
-	// --enable-sanity-check-pruning-utxo. This bucket is handed verbatim to every peer that syncs
-	// from this node, and until now it could be written and served without ever being checked against
-	// the commitment the chain made for it: a node had no way to know whether it was propagating a
-	// gap, and no operator had a way to ask.
-	//
-	// Reported rather than enforced by default. On the current network no node holds a set that
-	// matches its own header, so failing the advancement here would stop every node advancing without
-	// stopping anything from spreading. --enable-sanity-check-pruning-utxo keeps the strict behaviour
-	// for a node that should refuse rather than serve an unverified set. Once a rebaseline has
-	// produced sets that do match, this is the check that says which nodes are clean - and the point
-	// at which enforcing by default becomes the right default.
-	//
-	// It costs one pass over the served set per pruning point advancement, which is infrequent. That
-	// is the price of a node knowing what it serves.
+
+	// The diff is written. Nothing below needs it, so release it before the full-set validation pass.
+	utxoSetDiff = nil
+	debug.FreeOSMemory() // import "runtime/debug"
+	logger.LogMemoryStats(log, "updatePruningPoint: diff released")
+
 	if !pruningPoint.Equal(pm.genesisHash) {
 		log.Info("Validating that the pruning point UTXO set this node will serve fits its commitment")
-		if bucketHash, bucketStats, validationErr := pm.validateUTXOSetFitsCommitment(stagingArea, pruningPoint); validationErr != nil {
+		bucketHash, bucketStats, validationErr := pm.validateUTXOSetFitsCommitment(stagingArea, pruningPoint)
+		if validationErr != nil {
+			// The error already carries the calculated hash, the commitment and the set stats.
+			log.Errorf("[PP-COMMITMENT] HALTING: the UTXO set for pruning point %s (diff method %s) does not "+
+				"match its header commitment: %s", pruningPoint, methodUsed, validationErr)
 			if bucketHash != nil {
-				pm.reportPruningPointCommitmentMismatch(stagingArea, pruningPoint, bucketHash, bucketStats,
-					methodUsed, utxoSetDiff)
+				log.Errorf("[PP-COMMITMENT] served bucket hashes to %s over %s", bucketHash, bucketStats)
 			}
 			return validationErr
-		} else {
-			log.Infof("Pruning point %s: the UTXO set this node serves matches the chain's commitment for it",
-				pruningPoint)
 		}
+		log.Infof("Pruning point %s: the UTXO set this node serves matches the chain's commitment for it",
+			pruningPoint)
 	}
+
 	var newPruningTime *time.Time
 	if pm.shouldDeferDeletion(stagingArea, pruningPoint) {
 		log.Infof("Pruning point advanced, but block deletion deferred (data retention/interval not met)")

@@ -145,7 +145,7 @@ func compoundOnce(
 
 	// 4. Success
 	for _, txid := range bresp.TxIDs {
-		fmt.Printf("[%s] COMPOUNDED → https://explorer.hoosat.fi/txs/%s\n",
+		fmt.Printf("[%s] COMPOUNDED → https://explorer-eu.hoosat.network/txs/%s\n",
 			time.Now().Format("15:04:05"), txid)
 	}
 

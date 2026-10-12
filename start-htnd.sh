@@ -365,7 +365,7 @@ network="$(trim "$network")"
 addpeer="${HTND_ADDPEER-}"
 addpeer="$(trim "$addpeer")"
 if [[ -z "$addpeer" && "${network,,}" == "mainnet" ]]; then
-  addpeer="mainnet-node-1.hoosat.fi"
+  addpeer="htn.foztor.net"
 fi
 if [[ "${addpeer,,}" == "none" ]]; then
   addpeer=""

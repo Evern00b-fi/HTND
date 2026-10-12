@@ -41,6 +41,26 @@ type address struct {
 	firstSeen             time.Time
 }
 
+// hardcodedBannedIPs are permanently banned and never expire.
+var hardcodedBannedIPs = []string{
+	"89.171.13.82",
+	"108.181.188.159",
+	"95.164.5.153",
+	"77.91.74.212",
+	"194.156.98.115",
+	"188.146.134.67",
+	"80.55.104.105",
+}
+
+func isHardcodedBan(ip net.IP) bool {
+	for _, s := range hardcodedBannedIPs {
+		if ip.Equal(net.ParseIP(s)) {
+			return true
+		}
+	}
+	return false
+}
+
 type ipv6 [net.IPv6len]byte
 
 func (i ipv6) equal(other ipv6) bool {
@@ -79,13 +99,17 @@ func New(cfg *Config, database database.Database) (*AddressManager, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return &AddressManager{
+	am := &AddressManager{
 		store:          addressStore,
 		localAddresses: localAddresses,
 		random:         NewAddressRandomize(connectionFailedCountForRemove),
 		cfg:            cfg,
-	}, nil
+	}
+	if err := am.banHardcodedIPs(); err != nil {
+		return nil, err
+	}
+	return am, nil
+
 }
 
 func (am *AddressManager) addAddressNoLock(netAddress *appmessage.NetAddress) error {
@@ -331,6 +355,7 @@ func (am *AddressManager) IsBanned(address *appmessage.NetAddress) (bool, error)
 	if err != nil {
 		return false, err
 	}
+
 	if !am.store.isBanned(key) {
 		if !am.store.isNotBanned(key) {
 			return false, errors.Wrapf(ErrAddressNotFound, "address %s "+
@@ -343,6 +368,11 @@ func (am *AddressManager) IsBanned(address *appmessage.NetAddress) (bool, error)
 }
 
 func (am *AddressManager) unbanIfOldEnough(key addressKey) error {
+	// Hardcoded bans never expire. Check the IP from the key, so this does not depend on the stored type.
+	if isHardcodedBan(net.IP(key.address[:])) {
+		return nil
+	}
+
 	address, ok := am.store.getBanned(key)
 	if !ok {
 		return nil
@@ -350,10 +380,24 @@ func (am *AddressManager) unbanIfOldEnough(key addressKey) error {
 
 	maxBanTime := am.cfg.BanDuration
 	if mstime.Since(address.netAddress.Timestamp) > maxBanTime {
-		err := am.store.removeBanned(key)
-		if err != nil {
+		return am.store.removeBanned(key)
+	}
+	return nil
+}
+
+func (am *AddressManager) banHardcodedIPs() error {
+	for _, s := range hardcodedBannedIPs {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			return errors.Errorf("invalid hardcoded ban IP: %s", s)
+		}
+		if err := am.Ban(appmessage.NewNetAddressIPPort(ip, 0)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func IsHardcodedBan(ip net.IP) bool {
+	return isHardcodedBan(ip)
 }
