@@ -108,6 +108,20 @@ func (na *NetAdapter) Stop() error {
 	if na.stop.Add(1) != 1 {
 		return errors.New("net adapter stopped more than once")
 	}
+	// Stopping the P2P server only ends inbound streams; outbound connections are client streams and
+	// have to be disconnected here. A connection registered after this snapshot sees stop set (it is
+	// checked under the same lock) and disconnects itself. Disconnect runs outside the lock because it
+	// calls back into the disconnected handler, which takes the lock.
+	na.p2pConnectionsLock.RLock()
+	connections := make([]*NetConnection, 0, len(na.p2pConnections))
+	for connection := range na.p2pConnections {
+		connections = append(connections, connection)
+	}
+	na.p2pConnectionsLock.RUnlock()
+	for _, connection := range connections {
+		connection.Disconnect()
+	}
+
 	err := na.p2pServer.Stop()
 	if err != nil {
 		return err
@@ -118,6 +132,9 @@ func (na *NetAdapter) Stop() error {
 // P2PConnect tells the NetAdapter's underlying p2p server to initiate a connection
 // to the given address
 func (na *NetAdapter) P2PConnect(address string) error {
+	if na.stop.Load() != 0 {
+		return errors.Errorf("refusing to P2P connect to %s: the net adapter is stopped", address)
+	}
 	if na.cfg != nil && na.cfg.DisallowLoopbackP2PConnections {
 		if host, _, err := net.SplitHostPort(address); err == nil {
 			if strings.EqualFold(host, "localhost") {
@@ -155,6 +172,13 @@ func (na *NetAdapter) P2PConnectionCount() int {
 }
 
 func (na *NetAdapter) onP2PConnectedHandler(connection server.Connection) error {
+	// A dial or an inbound stream that completes after Stop must not start a router: the protocol
+	// manager may already be closed.
+	if na.stop.Load() != 0 {
+		connection.Disconnect()
+		return errors.New("the net adapter is stopped")
+	}
+
 	peerAddress := connection.Address().String()
 	routerName := fmt.Sprintf("P2P %s", peerAddress)
 
@@ -194,6 +218,14 @@ func (na *NetAdapter) onP2PConnectedHandler(connection server.Connection) error 
 	}
 
 	na.p2pConnectionsLock.Lock()
+	// Stop may have run while the router was being initialized. Checked under the lock Stop takes for
+	// its snapshot, so the connection is either in that snapshot or rejected here.
+	if na.stop.Load() != 0 {
+		na.p2pConnectionsLock.Unlock()
+		netConnection.Disconnect()
+		forgetOutboundRouter()
+		return errors.New("the net adapter is stopped")
+	}
 	defer na.p2pConnectionsLock.Unlock()
 
 	netConnection.setOnDisconnectedHandler(func() {
