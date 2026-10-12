@@ -119,7 +119,7 @@ type Flags struct {
 	DisableListen                   bool          `long:"nolisten" description:"Disable listening for incoming connections -- NOTE: Listening is automatically disabled if the --connect or --proxy options are used without also specifying listen interfaces via --listen"`
 	Listeners                       []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces port: 42421, testnet: 42423)"`
 	TargetOutboundPeers             int           `long:"outpeers" description:"Target number of outbound peers"`
-	MaxInboundPeers                 int           `long:"maxinpeers" description:"Max number of inbound peers"`
+	MaxInboundPeers                 int           `long:"maxinpeers" description:"Max number of inbound peers (0 accepts no inbound P2P connections)"`
 	EnableBanning                   bool          `long:"enablebanning" description:"Enable banning of misbehaving peers"`
 	BanDuration                     time.Duration `long:"banduration" description:"How long to ban misbehaving peers. Valid time units are {s, m, h}. Minimum 1 second"`
 	BanThreshold                    uint32        `long:"banthreshold" description:"Maximum allowed ban score before disconnecting and banning misbehaving peers."`
@@ -584,6 +584,14 @@ func LoadConfig() (*Config, error) {
 		cfg.RPCListeners = []string{
 			net.JoinHostPort("", cfg.NetParams().RPCPort),
 		}
+	}
+
+	if cfg.MaxInboundPeers < 0 {
+		str := "%s: The maxinpeers option may not be less than 0 -- parsed [%d]"
+		err := errors.Errorf(str, funcName, cfg.MaxInboundPeers)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, err
 	}
 
 	if cfg.RPCMaxConcurrentReqs < 0 {

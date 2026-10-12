@@ -58,7 +58,8 @@ func NewNetAdapter(cfg *config.Config) (*NetAdapter, error) {
 		return nil, err
 	}
 
-	p2pServer, err := grpcserver.NewP2PServer(cfg.Listeners)
+	p2pServer, err := grpcserver.NewP2PServer(cfg.Listeners, cfg.MaxInboundPeers,
+		append(append([]string{}, cfg.AddPeers...), cfg.ConnectPeers...))
 	if err != nil {
 		return nil, err
 	}
