@@ -22,7 +22,7 @@ type PruningStore interface {
 
 	StageStartUpdatingPruningPointUTXOSet(stagingArea *StagingArea)
 	HadStartedUpdatingPruningPointUTXOSet(dbContext DBWriter) (bool, error)
-	FinishUpdatingPruningPointUTXOSet(dbContext DBWriter) error
+	StageFinishUpdatingPruningPointUTXOSet(stagingArea *StagingArea)
 	StorePruningPointUTXOSetUpdateMethod(dbContext DBWriter, pruningPoint *externalapi.DomainHash, method string) error
 	PruningPointUTXOSetUpdateMethod(dbContext DBReader, pruningPoint *externalapi.DomainHash) (string, bool, error)
 	UpdatePruningPointUTXOSet(dbContext DBWriter, diff externalapi.UTXODiff) error

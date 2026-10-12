@@ -10,10 +10,11 @@ import (
 type pruningStagingShard struct {
 	store *pruningStore
 
-	pruningPointByIndex              map[uint64]*externalapi.DomainHash
-	currentPruningPointIndex         *uint64
-	newPruningPointCandidate         *externalapi.DomainHash
-	startUpdatingPruningPointUTXOSet bool
+	pruningPointByIndex               map[uint64]*externalapi.DomainHash
+	currentPruningPointIndex          *uint64
+	newPruningPointCandidate          *externalapi.DomainHash
+	startUpdatingPruningPointUTXOSet  bool
+	finishUpdatingPruningPointUTXOSet bool
 
 	lastPruningTime *time.Time
 }
@@ -21,11 +22,12 @@ type pruningStagingShard struct {
 func (ps *pruningStore) stagingShard(stagingArea *model.StagingArea) *pruningStagingShard {
 	return stagingArea.GetOrCreateShard(ps.shardID, func() model.StagingShard {
 		return &pruningStagingShard{
-			store:                            ps,
-			pruningPointByIndex:              map[uint64]*externalapi.DomainHash{},
-			newPruningPointCandidate:         nil,
-			startUpdatingPruningPointUTXOSet: false,
-			lastPruningTime:                  nil,
+			store:                             ps,
+			pruningPointByIndex:               map[uint64]*externalapi.DomainHash{},
+			newPruningPointCandidate:          nil,
+			startUpdatingPruningPointUTXOSet:  false,
+			finishUpdatingPruningPointUTXOSet: false,
+			lastPruningTime:                   nil,
 		}
 	}).(*pruningStagingShard)
 }
@@ -89,6 +91,17 @@ func (mss *pruningStagingShard) Commit(dbTx model.DBTransaction) error {
 		}
 	}
 
+	if mss.finishUpdatingPruningPointUTXOSet {
+		err := dbTx.Delete(mss.store.updatingPruningPointUTXOSetKey)
+		if err != nil {
+			return err
+		}
+		err = dbTx.Delete(mss.store.pruningPointUTXOSetUpdateMethodKey)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -96,6 +109,7 @@ func (mss *pruningStagingShard) isStaged() bool {
 	return len(mss.pruningPointByIndex) > 0 ||
 		mss.newPruningPointCandidate != nil ||
 		mss.startUpdatingPruningPointUTXOSet ||
+		mss.finishUpdatingPruningPointUTXOSet ||
 		mss.lastPruningTime != nil
 }
 
@@ -104,5 +118,6 @@ func (mss *pruningStagingShard) UnstageAll() {
 	mss.currentPruningPointIndex = nil
 	mss.newPruningPointCandidate = nil
 	mss.startUpdatingPruningPointUTXOSet = false
+	mss.finishUpdatingPruningPointUTXOSet = false
 	mss.lastPruningTime = nil
 }
