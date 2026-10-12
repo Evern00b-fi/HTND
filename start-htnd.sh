@@ -377,10 +377,19 @@ say
 say "RPC settings"
 saferpc=true
 
-if prompt_yes_no "Enable --saferpc (disables state-changing RPC calls)?" "yes"; then
+# --saferpc disables selected administrative methods and restricts some expensive queries. It does
+# not bind localhost, authenticate callers, or make RPC read-only.
+if prompt_yes_no "Enable --saferpc (disables selected administrative RPC methods)?" "yes"; then
   saferpc=true
 else
   saferpc=false
+fi
+
+# RPC has no authentication and otherwise listens on every interface.
+if prompt_yes_no "Keep RPC on this machine only (--rpclisten 127.0.0.1)?" "yes"; then
+  rpclocal=true
+else
+  rpclocal=false
 fi
 
 say
@@ -417,6 +426,10 @@ fi
 
 if [[ "$saferpc" == true ]]; then
   args+=(--saferpc)
+fi
+
+if [[ "$rpclocal" == true ]]; then
+  args+=(--rpclisten 127.0.0.1)
 fi
 
 # Enable UTXO index by default.

@@ -12,6 +12,12 @@
 #        --repair-missing-multisets
 #   sudo systemctl start htnd
 # and never leave one in this file.
+#
+# RPC has no authentication, so ExecStart keeps it on 127.0.0.1. A pool or explorer on another machine
+# needs that --rpclisten replaced with a private address (or a second --rpclisten added for one), and a
+# firewall that admits only those clients. --saferpc only disables selected administrative methods and
+# restricts some expensive queries; it does not bind localhost, authenticate callers, or make RPC
+# read-only.
 
 [Unit]
 Description=Hoosat Network full node (htnd)
@@ -28,6 +34,7 @@ ExecStart=/usr/local/bin/HTND \
     --appdir=/var/lib/htnd \
     --utxoindex \
     --saferpc \
+    --rpclisten=127.0.0.1:42420 \
     --autoupdate=false \
     --autoupdate-download=false \
     --autoupdate-install=false \
