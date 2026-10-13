@@ -44,6 +44,7 @@ type IBDContext interface {
 	UnsetIBDRunning()
 	IsRecoverableError(err error) bool
 	AddressManager() *addressmanager.AddressManager
+	UpdatePruningPointIfRequired()
 }
 
 type handleIBDFlow struct {
@@ -1038,6 +1039,7 @@ func (flow *handleIBDFlow) syncMissingBlockBodies(highHash *externalapi.DomainHa
 			if err != nil {
 				return err
 			}
+			flow.UpdatePruningPointIfRequired()
 
 			highestProcessedDAAScore = block.Header.DAAScore()
 			flow.blocksProcessedSinceLast++

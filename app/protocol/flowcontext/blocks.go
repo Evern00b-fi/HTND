@@ -161,7 +161,24 @@ func (f *FlowContext) AddBlock(block *externalapi.DomainBlock) error {
 	if err != nil {
 		return err
 	}
-	return f.Broadcast(appmessage.NewMsgInvBlock(consensushashing.BlockHash(block)))
+	err = f.Broadcast(appmessage.NewMsgInvBlock(consensushashing.BlockHash(block)))
+	if err != nil {
+		return err
+	}
+	f.UpdatePruningPointIfRequired()
+	return nil
+}
+
+// UpdatePruningPointIfRequired runs a pruning point UTXO set update that a block insertion left pending. Block-adding
+// flows call it after the block is committed and, where they relay blocks, after their attempt to announce it, because
+// the update holds the consensus lock for minutes. A failure is logged, not returned: the block is already committed,
+// and failing the flow or the submission for it would misreport the block. If the update is still pending, the next
+// call (after the next added block, or at startup) runs it again.
+func (f *FlowContext) UpdatePruningPointIfRequired() {
+	err := f.Domain().Consensus().UpdatePruningPointIfRequired()
+	if err != nil {
+		log.Errorf("The pruning point UTXO set update failed: %+v", err)
+	}
 }
 
 // IsIBDRunning returns true if IBD is currently marked as running
