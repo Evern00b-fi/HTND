@@ -29,8 +29,8 @@ type RPCClient struct {
 	isConnected          atomic.Uint32
 	isClosed             atomic.Uint32
 	isReconnecting       atomic.Uint32
-	lastDisconnectedTime time.Time
-	isConnecting         atomic.Uint32
+	lastDisconnectedNanos atomic.Int64
+	isConnecting          atomic.Uint32
 
 	// activeClient is the connection whose callbacks are acted on. A replaced connection's loops keep
 	// reporting errors after it is closed, and those must not tear down the connection that replaced it.
@@ -172,7 +172,8 @@ func (c *RPCClient) Reconnect() error {
 			return errors.Errorf("Stopped reconnecting to %s because the client was closed", c.rpcAddress)
 		}
 		retryDelay := reconnectRetryDelay
-		if time.Since(c.lastDisconnectedTime) > retryDelay {
+		lastDisconnected := c.lastDisconnectedNanos.Load()
+		if lastDisconnected == 0 || time.Since(time.Unix(0, lastDisconnected)) > retryDelay {
 			err := c.connect()
 			if err == nil {
 				return nil
@@ -220,7 +221,7 @@ func (c *RPCClient) handleClientDisconnected() {
 		if err != nil {
 			panic(err)
 		}
-		c.lastDisconnectedTime = time.Now()
+		c.lastDisconnectedNanos.Store(time.Now().UnixNano())
 		err = c.Reconnect()
 		if err != nil {
 			// Close() stops a reconnect in progress, and Reconnect reports that as an error. It is the client
