@@ -2617,6 +2617,10 @@ func (pm *pruningManager) updatePruningPoint() error {
 		pm.pruningStore.StageLastPruningTime(stagingArea, *newPruningTime)
 	}
 
+	// Finished in the same commit as the deletion above: an update left pending after it could not resume, since
+	// the blocks and UTXO diffs it re-derives the diff from would be gone.
+	pm.pruningStore.StageFinishUpdatingPruningPointUTXOSet(stagingArea)
+
 	log.Info("Commit all changes")
 	err = staging.CommitAllChanges(pm.databaseContext, stagingArea)
 	if err != nil {
@@ -2631,11 +2635,6 @@ func (pm *pruningManager) updatePruningPoint() error {
 	pm.cachedPruningPoint = nil
 	pm.cachedPruningPointAnticone = nil
 
-	log.Info("Finishing updating the pruning point UTXO set")
-	err = pm.pruningStore.FinishUpdatingPruningPointUTXOSet(pm.databaseContext)
-	if err != nil {
-		return err
-	}
 	pm.triggerAutoExodusExport(pruningPoint)
 	return nil
 }
