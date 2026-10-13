@@ -162,6 +162,8 @@ User=htnd
 ExecStart=/home/htnd/bin/HTND --saferpc
 Restart=on-failure
 RestartSec=5s
+# Allow more than HTND's 2-minute component-stop timeout, plus database close time.
+TimeoutStopSec=300
 
 [Install]
 WantedBy=multi-user.target
