@@ -23,12 +23,12 @@ const (
 type RPCClient struct {
 	*grpcclient.GRPCClient
 
-	rpcAddress           string
-	rpcRouter            *rpcRouter
-	rpcRouterMutex       sync.RWMutex
-	isConnected          atomic.Uint32
-	isClosed             atomic.Uint32
-	isReconnecting       atomic.Uint32
+	rpcAddress            string
+	rpcRouter             *rpcRouter
+	rpcRouterMutex        sync.RWMutex
+	isConnected           atomic.Uint32
+	isClosed              atomic.Uint32
+	isReconnecting        atomic.Uint32
 	lastDisconnectedNanos atomic.Int64
 	isConnecting          atomic.Uint32
 
