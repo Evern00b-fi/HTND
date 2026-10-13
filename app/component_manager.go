@@ -174,6 +174,10 @@ func (a *ComponentManager) Stop() bool {
 		log.Criticalf("The consensus events handler did not finish within %s", consensusEventsDrainTimeout)
 		return false
 	}
+
+	// The connection manager's loop and its DNS seeding goroutines are not waited for, and can still record addresses
+	// after the database is closed.
+	a.addressManager.Stop()
 	return true
 }
 
