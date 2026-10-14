@@ -581,10 +581,31 @@ func LoadConfig() (*Config, error) {
 	// RPC listener is all addresses on the RPC listen port for the
 	// network we are to connect to.
 	if !cfg.DisableRPC && len(cfg.RPCListeners) == 0 {
-		cfg.RPCListeners = []string{
-			net.JoinHostPort("127.0.0.1", cfg.NetParams().RPCPort),
-			net.JoinHostPort("::1", cfg.NetParams().RPCPort),
+		rpcPort := cfg.NetParams().RPCPort
+		var listeners []string
+
+		// 1. Check and add IPv4 loopback
+		ipv4Addr := net.JoinHostPort("127.0.0.1", rpcPort)
+		if ln, err := net.Listen("tcp4", ipv4Addr); err == nil {
+			ln.Close()
+			listeners = append(listeners, ipv4Addr)
 		}
+
+		// 2. Check and add IPv6 loopback
+		ipv6Addr := net.JoinHostPort("::1", rpcPort)
+		if ln, err := net.Listen("tcp6", ipv6Addr); err == nil {
+			ln.Close()
+			listeners = append(listeners, ipv6Addr)
+		}
+
+		// 3. Fallback if neither could be bound (e.g., severe network misconfiguration)
+		if len(listeners) == 0 {
+			// Keep the original default behavior so the downstream listener
+			// logic can fail explicitly with a clear error message.
+			listeners = []string{ipv4Addr, ipv6Addr}
+		}
+
+		cfg.RPCListeners = listeners
 	}
 
 	if cfg.MaxInboundPeers < 0 {
