@@ -428,8 +428,8 @@ if [[ "$saferpc" == true ]]; then
   args+=(--saferpc)
 fi
 
-if [[ "$rpclocal" == true ]]; then
-  args+=(--rpclisten 127.0.0.1)
+if [[ "$rpclocal" == false ]]; then
+  args+=(--rpclisten 0.0.0.0)
 fi
 
 # Enable UTXO index by default.
