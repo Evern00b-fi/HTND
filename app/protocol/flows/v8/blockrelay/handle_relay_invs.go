@@ -2,6 +2,7 @@ package blockrelay
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/HoosatNetwork/HTND/v2/app/appmessage"
@@ -59,6 +60,7 @@ type RelayInvsContext interface {
 	IsIBDRunning() bool
 	IsRecoverableError(err error) bool
 	IsNearlySynced() (bool, error)
+	UpdatePruningPointIfRequired()
 }
 
 type invRelayBlock struct {
@@ -80,6 +82,10 @@ type handleRelayInvsFlow struct {
 	incomingDone  chan struct{}
 	incomingErrMu sync.Mutex
 	incomingErr   error
+
+	// requestedBlocks counts blocks asked for with RequestRelayBlocks and not yet received. The incoming
+	// reader takes one per MsgBlock and refuses a block that no request accounts for.
+	requestedBlocks atomic.Int64
 }
 
 // HandleRelayInvs listens to appmessage.MsgInvRelayBlock messages, requests their corresponding blocks if they
@@ -141,6 +147,13 @@ func (flow *handleRelayInvsFlow) startIncomingReader() {
 					// (Reader keeps draining the router route so it won't saturate.)
 				}
 			case *appmessage.MsgBlock:
+				// Honest peers only send a block in answer to RequestRelayBlocks. Anything else would sit in
+				// blockChan - up to its capacity, each block as large as the P2P message ceiling - until
+				// the next request read it, so it is refused here instead.
+				if flow.requestedBlocks.Add(-1) < 0 {
+					flow.setIncomingErr(protocolerrors.Errorf(true, "received a block that was not requested"))
+					return
+				}
 				select {
 				case flow.blockChan <- m:
 				default:
@@ -449,6 +462,9 @@ func (flow *handleRelayInvsFlow) start() error {
 		if err != nil {
 			return err
 		}
+
+		// Only after the attempt to announce the block: if it moved the pruning point, the update holds the consensus lock.
+		flow.UpdatePruningPointIfRequired()
 	}
 }
 
@@ -496,6 +512,7 @@ func (flow *handleRelayInvsFlow) requestBlock(requestHash *externalapi.DomainHas
 	defer flow.SharedRequestedBlocks().Remove(requestHash)
 
 	getRelayBlocksMsg := appmessage.NewMsgRequestRelayBlocks([]*externalapi.DomainHash{requestHash})
+	flow.requestedBlocks.Add(1)
 	err := flow.outgoingRoute.Enqueue(getRelayBlocksMsg)
 	if err != nil {
 		return nil, false, err

@@ -96,6 +96,12 @@ type Config struct {
 	// of these blocks. A recovery step to ask for, like RepairBlockStatuses, not something to run on
 	// every boot.
 	RepairMissingMultisets bool
+	// DeferPruningPointUTXOSetUpdate makes ValidateAndInsertBlock return as soon as a block that moves the pruning
+	// point is committed, leaving the pruning point UTXO set update to Consensus.UpdatePruningPointIfRequired, which
+	// the node's block relay and RPC submission call after announcing the block, and IBD after inserting it. Without
+	// it the update runs inside ValidateAndInsertBlock, as for tools and tests that use the consensus directly.
+	// Trusted-data insertion runs it itself either way.
+	DeferPruningPointUTXOSetUpdate bool
 	// EnableAutoExodusExportOnPruning exports an acceptance-data Exodus bundle after a pruning point moves.
 	// AutoExodusExportDir is the parent directory for those best-effort diagnostic bundles.
 	EnableAutoExodusExportOnPruning bool
@@ -652,6 +658,8 @@ func (f *factory) NewConsensus(config *Config, db infrastructuredatabase.Databas
 			threshold: config.MaxConsecutiveDisqualifiedBlocks,
 			onReached: config.OnDisqualifiedBlockStreak,
 		},
+
+		deferPruningPointUTXOSetUpdate: config.DeferPruningPointUTXOSetUpdate,
 	}
 
 	if isOldReachabilityInitialized {

@@ -4,8 +4,10 @@ import (
 	"testing"
 
 	consensusdatabase "github.com/HoosatNetwork/HTND/v2/domain/consensus/database"
+	"github.com/HoosatNetwork/HTND/v2/domain/consensus/model"
 	"github.com/HoosatNetwork/HTND/v2/domain/consensus/model/externalapi"
 	"github.com/HoosatNetwork/HTND/v2/infrastructure/db/database/ldb"
+	"github.com/HoosatNetwork/HTND/v2/util/staging"
 )
 
 // TestPruningPointUTXOSetUpdateMethodBelongsToItsPruningPoint pins the contract interrupted pruning point UTXO set
@@ -36,8 +38,10 @@ func TestPruningPointUTXOSetUpdateMethodBelongsToItsPruningPoint(t *testing.T) {
 	if _, found, err := store.PruningPointUTXOSetUpdateMethod(dbManager, laterPruningPoint); err != nil || found {
 		t.Fatalf("a method recorded for one pruning point was returned for another (found %t, err %v)", found, err)
 	}
-	if err := store.FinishUpdatingPruningPointUTXOSet(dbManager); err != nil {
-		t.Fatalf("FinishUpdatingPruningPointUTXOSet: %+v", err)
+	stagingArea := model.NewStagingArea()
+	store.StageFinishUpdatingPruningPointUTXOSet(stagingArea)
+	if err := staging.CommitAllChanges(dbManager, stagingArea); err != nil {
+		t.Fatalf("CommitAllChanges: %+v", err)
 	}
 	if _, found, err := store.PruningPointUTXOSetUpdateMethod(dbManager, pruningPoint); err != nil || found {
 		t.Fatalf("the recorded method survived finishing the update (found %t, err %v)", found, err)

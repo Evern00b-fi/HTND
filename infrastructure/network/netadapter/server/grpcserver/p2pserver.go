@@ -37,15 +37,28 @@ const DefaultP2PMaxMessageSize = 1024 * 1024 * 1024 * 4
 // any server is created.
 var p2pMaxMessageSize = DefaultP2PMaxMessageSize
 
-// p2pMaxInboundConnections is the max amount of inbound connections for the P2P server.
-// Note that inbound connections are not limited by the gRPC server. (A value of 0 means
-// unlimited inbound connections.) The P2P limiting logic is more applicative, and as such
-// is handled in the ConnectionManager instead.
-const p2pMaxInboundConnections = 0
-
-// NewP2PServer creates a new P2PServer
-func NewP2PServer(listeningAddresses []string) (server.P2PServer, error) {
-	gRPCServer := newGRPCServer(listeningAddresses, p2pMaxMessageSize, p2pMaxInboundConnections, "P2P")
+// NewP2PServer creates a new P2PServer. It admits at most maxInboundConnections inbound P2P streams
+// at a time, when each stream arrives, and 0 admits none. The ConnectionManager also trims inbound
+// peers, but only on its periodic pass; without this limit any number of streams, each with its own
+// router and buffers, could be opened in between.
+//
+// requestedPeers are the --addpeer/--connect addresses (host:port). The ConnectionManager does not
+// count an inbound connection whose IP and port match one of them as an inbound peer, so neither does
+// this limit: each such address gets one stream of its own outside maxInboundConnections. Addresses
+// given as host names are not resolved here and get no such slot.
+func NewP2PServer(listeningAddresses []string, maxInboundConnections int, requestedPeers []string) (server.P2PServer, error) {
+	gRPCServer := newGRPCServer(listeningAddresses, p2pMaxMessageSize, maxInboundConnections, "P2P")
+	gRPCServer.refuseAllInbound = maxInboundConnections == 0
+	gRPCServer.requestedPeerSlots = make(map[string]bool)
+	for _, address := range requestedPeers {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, errors.Wrapf(err, "requested peer %s", address)
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			gRPCServer.requestedPeerSlots[net.JoinHostPort(ip.String(), port)] = false
+		}
+	}
 	p2pServer := &p2pServer{gRPCServer: *gRPCServer}
 	protowire.RegisterP2PServer(gRPCServer.server, p2pServer)
 	return p2pServer, nil

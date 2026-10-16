@@ -140,24 +140,8 @@ func (app *htndApp) main(startedChan chan<- struct{}) error {
 		return err
 	}
 
-	defer func() {
-		log.Infof("Gracefully shutting down htnd...")
-
-		shutdownDone := make(chan struct{})
-		go func() {
-			componentManager.Stop()
-			shutdownDone <- struct{}{}
-		}()
-
-		const shutdownTimeout = 2 * time.Minute
-
-		select {
-		case <-shutdownDone:
-		case <-time.After(shutdownTimeout):
-			log.Criticalf("Graceful shutdown timed out %s. Terminating...", shutdownTimeout)
-		}
-		log.Infof("htnd shutdown complete")
-	}()
+	const shutdownTimeout = 2 * time.Minute
+	defer stopComponents(componentManager.Stop, shutdownTimeout)
 
 	componentManager.Start()
 
@@ -170,6 +154,30 @@ func (app *htndApp) main(startedChan chan<- struct{}) error {
 	// server.
 	<-interrupt
 	return nil
+}
+
+// stopComponents runs stop and returns once it has finished, so that the database Close deferred before it runs
+// after it. If stop does not finish within timeout, or reports that something is still running, goroutines may still
+// be using the database: closing it under them makes them fail with "pebble: closed" and exit the process in the
+// middle of the close. The process exits here instead, without closing the database. For the database that is the
+// same as a crash, which its write-ahead log recovers from on the next start when the WAL is enabled (the default).
+func stopComponents(stop func() bool, timeout time.Duration) {
+	log.Infof("Gracefully shutting down htnd...")
+
+	stopped := make(chan bool, 1)
+	go func() {
+		stopped <- stop()
+	}()
+
+	select {
+	case ok := <-stopped:
+		if !ok {
+			panics.Exit(log, "htnd did not shut down cleanly; not closing the database")
+		}
+	case <-time.After(timeout):
+		panics.Exit(log, fmt.Sprintf("graceful shutdown timed out after %s; not closing the database", timeout))
+	}
+	log.Infof("htnd shutdown complete")
 }
 
 // dbPath returns the path to the block database given a database type.

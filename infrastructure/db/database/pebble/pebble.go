@@ -26,7 +26,11 @@ type DB struct {
 // Offline tools must use this. They are run on copies of datadirs, often because the node's data is
 // suspect, and NewPebbleDB's recovery would silently wipe the very copy being investigated.
 func OpenPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
-	db, err := pebble.Open(path, Options(cacheSizeMiB))
+	options := Options(cacheSizeMiB)
+	// pebble.Open takes its own reference to the block cache; drop the creator's so Close frees it.
+	defer options.Cache.Unref()
+
+	db, err := pebble.Open(path, options)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -38,6 +42,9 @@ func OpenPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
 // pebble has no repair API. Offline tools must use OpenPebbleDB instead.
 func NewPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
 	options := Options(cacheSizeMiB)
+	// pebble.Open takes its own reference to the block cache; drop the creator's so Close frees it.
+	// Deferred so the cache stays valid for the second Open below.
+	defer options.Cache.Unref()
 
 	db, err := pebble.Open(path, options)
 	if err != nil {

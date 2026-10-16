@@ -9,6 +9,7 @@ type Consensus interface {
 	BuildBlockTemplate(coinbaseData *DomainCoinbaseData, transactions []*DomainTransaction) (*DomainBlockTemplate, error)
 	ValidateAndInsertBlock(block *DomainBlock, updateVirtual bool, powSkip bool) error
 	ValidateAndInsertBlockWithTrustedData(block *BlockWithTrustedData, validateUTXO bool) error
+	UpdatePruningPointIfRequired() error
 	ValidateTransactionAndPopulateWithConsensusData(transaction *DomainTransaction) error
 	ImportPruningPoints(pruningPoints []BlockHeader) error
 	BuildPruningPointProof() (*PruningPointProof, error)

@@ -56,6 +56,19 @@ func HandleGetTransactionStatus(context *rpccontext.Context, _ *router.Router, r
 		return transactionStatusResponse(context, acceptance)
 	}
 
+	// The search below reads every block this node holds, which is why GetBlockByTransactionID is
+	// disabled in safe RPC mode. Reaching the same scan from here let any client start one per call
+	// with a random transaction id. The search was not run, so the answer is unknown, not "not found".
+	if context.Config.SafeRPC {
+		response := &appmessage.GetTransactionStatusResponseMessage{
+			Status: appmessage.TransactionStatusUnknown,
+		}
+		response.Error = appmessage.RPCErrorf("transaction %s is not in the mempool or accepted by the "+
+			"last %d chain blocks; the full block search is disabled while the node is in safe RPC mode",
+			transactionID, maxChainBlocksSearchedFromTip)
+		return response, nil
+	}
+
 	emptyHash, _ := externalapi.NewDomainHashFromString("")
 	// Try to find block
 	block, err := context.Domain.Consensus().GetBlockByTransactionID(transactionID)

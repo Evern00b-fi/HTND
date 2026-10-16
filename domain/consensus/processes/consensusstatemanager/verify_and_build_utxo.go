@@ -275,7 +275,19 @@ func (csm *consensusStateManager) validateBlockTransactionsAgainstPastUTXO(stagi
 	// A block whose own records genuinely disagree with each other is still refused: that is what
 	// blockOnlyCarriesTheInheritedOffset above decides, by comparing the block's acceptance data
 	// against its own UTXO diff, and it needs no guess about what a toRemove entry means.
+	//
+	//
+	// From StrictUTXOCommitmentVersion on, this tolerance ends as verifyUTXO's does. It was computed
+	// without the gate, so a block whose body spends a missing input stayed valid on a node where the
+	// predicate holds - including on a clean node for a child of its pruning point.
 	tolerateMissingTxOut := csm.blockInheritsKnownUTXOCommitmentOffset(stagingArea, blockHash)
+	if tolerateMissingTxOut {
+		strict, err := csm.utxoCommitmentIsStrictFor(stagingArea, blockHash)
+		if err != nil {
+			return err
+		}
+		tolerateMissingTxOut = !strict
+	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex

@@ -71,10 +71,11 @@ func (v *transactionValidator) ValidateTransactionWithMissingInputsAndPopulateFe
 	if err := v.checkFoundInputsSequenceLock(tx, povDAAScore); err != nil {
 		return err
 	}
-	if err := v.validateFoundInputsSigOpCounts(tx); err != nil {
+	flags := v.scriptFlagsForDAAScore(povDAAScore)
+	if err := v.validateFoundInputsSigOpCounts(tx, flags); err != nil {
 		return err
 	}
-	return v.validateFoundInputsScripts(tx)
+	return v.validateFoundInputsScripts(tx, flags)
 }
 
 func (v *transactionValidator) checkFoundInputsCoinbaseMaturity(tx *externalapi.DomainTransaction, povDAAScore uint64) error {
@@ -123,12 +124,12 @@ func (v *transactionValidator) checkFoundInputsSequenceLock(tx *externalapi.Doma
 	return nil
 }
 
-func (v *transactionValidator) validateFoundInputsSigOpCounts(tx *externalapi.DomainTransaction) error {
+func (v *transactionValidator) validateFoundInputsSigOpCounts(tx *externalapi.DomainTransaction, flags txscript.ScriptFlags) error {
 	for i, input := range tx.Inputs {
 		if input.UTXOEntry == nil {
 			continue
 		}
-		sigOpCount := txscript.GetPreciseSigOpCount(input.SignatureScript, input.UTXOEntry.ScriptPublicKey())
+		sigOpCount := txscript.GetPreciseSigOpCountWithFlags(input.SignatureScript, input.UTXOEntry.ScriptPublicKey(), flags)
 		if sigOpCount != int(input.SigOpCount) {
 			return errors.Wrapf(ruleerrors.ErrWrongSigOpCount,
 				"input %d specifies SigOpCount %d while actual SigOpCount is %d",
@@ -138,7 +139,7 @@ func (v *transactionValidator) validateFoundInputsSigOpCounts(tx *externalapi.Do
 	return nil
 }
 
-func (v *transactionValidator) validateFoundInputsScripts(tx *externalapi.DomainTransaction) error {
+func (v *transactionValidator) validateFoundInputsScripts(tx *externalapi.DomainTransaction, flags txscript.ScriptFlags) error {
 	sighashReusedValues := &consensushashing.SighashReusedValues{}
 	for i, input := range tx.Inputs {
 		utxoEntry := input.UTXOEntry
@@ -147,7 +148,7 @@ func (v *transactionValidator) validateFoundInputsScripts(tx *externalapi.Domain
 		}
 		scriptPubKey := utxoEntry.ScriptPublicKey()
 		vm := v.enginePool.Get().(*txscript.Engine)
-		err := vm.Init(scriptPubKey, tx, i, txscript.ScriptNoFlags, v.sigCache, v.sigCacheECDSA, v.mldsa44Cache, sighashReusedValues)
+		err := vm.Init(scriptPubKey, tx, i, flags, v.sigCache, v.sigCacheECDSA, v.mldsa44Cache, sighashReusedValues)
 		if err != nil {
 			vm.Reset()
 			v.enginePool.Put(vm)

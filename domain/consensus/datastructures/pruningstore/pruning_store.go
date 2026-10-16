@@ -345,14 +345,13 @@ func (ps *pruningStore) HadStartedUpdatingPruningPointUTXOSet(dbContext model.DB
 	return dbContext.Has(ps.updatingPruningPointUTXOSetKey)
 }
 
-func (ps *pruningStore) FinishUpdatingPruningPointUTXOSet(dbContext model.DBWriter) error {
-	err := dbContext.Delete(ps.updatingPruningPointUTXOSetKey)
-	if err != nil {
-		return err
-	}
-	// Deleted after the flag: if the node stops in between, the record names a pruning point the next update is not
-	// for, so it is ignored.
-	return dbContext.Delete(ps.pruningPointUTXOSetUpdateMethodKey)
+// StageFinishUpdatingPruningPointUTXOSet stages clearing the update flag and the recorded diff method. They are
+// cleared in the same commit as the rest of stagingArea, so an update whose past blocks are deleted in that commit
+// is never left pending on disk without the data it would need to resume.
+func (ps *pruningStore) StageFinishUpdatingPruningPointUTXOSet(stagingArea *model.StagingArea) {
+	stagingShard := ps.stagingShard(stagingArea)
+
+	stagingShard.finishUpdatingPruningPointUTXOSet = true
 }
 
 // StorePruningPointUTXOSetUpdateMethod records which diff method the update of pruningPoint's UTXO set uses. It is

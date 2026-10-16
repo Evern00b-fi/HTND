@@ -117,12 +117,24 @@ func (a *ComponentManager) Start() {
 	}
 }
 
-// Stop gracefully shuts down all the htnd services.
-func (a *ComponentManager) Stop() {
+// consensusEventsDrainTimeout bounds Stop's wait for the consensus events handler. It stays inside the caller's
+// graceful shutdown timeout. A variable so that tests can shorten it.
+var consensusEventsDrainTimeout = 90 * time.Second
+
+// rpcRequestHandlersTimeout bounds Stop's wait for RPC request handlers that are still running.
+const rpcRequestHandlersTimeout = 20 * time.Second
+
+// stopRPCRequestHandlers is rpc.Manager.StopRequestHandlers. A variable so that tests can stand in for handlers that
+// are still running.
+var stopRPCRequestHandlers = (*rpc.Manager).StopRequestHandlers
+
+// Stop gracefully shuts down all the htnd services. It reports whether they all finished; if not, goroutines
+// may still be using the database, and the caller must not close it.
+func (a *ComponentManager) Stop() bool {
 	// Make sure this only happens once.
 	if atomic.AddInt32(&a.shutdown, 1) != 1 {
 		log.Infof("htnd is already in the process of shutting down")
-		return
+		return false
 	}
 
 	log.Warnf("htnd shutting down")
@@ -142,17 +154,27 @@ func (a *ComponentManager) Stop() {
 		log.Errorf("Error stopping the net adapter: %+v", err)
 	}
 
+	// The database is closed right after Stop returns true, and RPC request handlers still running would use it while
+	// it is being closed. Waited for before the protocol manager and the consensus events channel are shut down, which a
+	// running handler (SubmitBlock) may still use; if they do not return in time, Stop reports failure right away and
+	// leaves both alone. The wait is bounded, but this bound and the consensus events drain below together do not
+	// guarantee that Stop finishes within the caller's graceful shutdown timeout.
+	if !stopRPCRequestHandlers(a.rpcManager, rpcRequestHandlersTimeout) {
+		log.Criticalf("RPC request handlers did not return within %s", rpcRequestHandlersTimeout)
+		return false
+	}
+
 	a.protocolManager.Close()
 	close(a.protocolManager.Context().Domain().ConsensusEventsChannel())
 
-	// The database is closed right after Stop returns. Let the RPC manager's consensus events handler apply the events
-	// still queued first - an IBD resolve leaves many - or it writes to the closed database, panics and exits the
-	// process with status 1. The wait is bounded to stay inside the caller's graceful shutdown timeout.
-	const consensusEventsDrainTimeout = 90 * time.Second
+	// The database is closed right after Stop returns true. Let the RPC manager's consensus events handler apply the
+	// events still queued first - an IBD resolve leaves many - or it writes to the closed database, panics and exits
+	// the process with status 1. The wait is bounded by consensusEventsDrainTimeout.
 	if !a.rpcManager.WaitForConsensusEventsHandler(consensusEventsDrainTimeout) {
-		log.Warnf("The consensus events handler did not finish within %s; closing the database anyway",
-			consensusEventsDrainTimeout)
+		log.Criticalf("The consensus events handler did not finish within %s", consensusEventsDrainTimeout)
+		return false
 	}
+	return true
 }
 
 // NewComponentManager returns a new ComponentManager instance.
@@ -183,6 +205,7 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 		EnableUTXODebugDiagnostics:        cfg.EnableUTXODebugDiagnostics,
 		RepairBlockStatuses:               cfg.RepairBlockStatuses,
 		RepairMissingMultisets:            cfg.RepairMissingMultisets,
+		DeferPruningPointUTXOSetUpdate:    true,
 		EnableAutoExodusExportOnPruning:   cfg.EnableAutoExodusExportOnPruning,
 		AutoExodusExportDir:               cfg.AutoExodusExportDir,
 		UseHoohashCLibrary:                cfg.UseHoohashCLibrary,

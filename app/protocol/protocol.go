@@ -34,8 +34,12 @@ func (m *Manager) routerInitializer(router *routerpkg.Router, netConnection *net
 		m.routersWaitGroup.Add(1)
 		defer m.routersWaitGroup.Done()
 
+		// A connection whose router was initialized just before the net adapter stopped can get here
+		// after Close. That is part of shutdown, not a programming error, and the net adapter has
+		// already disconnected the connection (it is stopped before Close is called).
 		if m.isClosed.Load() == 1 {
-			panic(errors.Errorf("tried to initialize router when the protocol manager is closed"))
+			log.Debugf("Not running flows for %s: the protocol manager is closed", netConnection)
+			return
 		}
 		log.Debugf("initializing route for %s", netConnection)
 		isBanned, err := m.context.ConnectionManager().IsBanned(netConnection)
