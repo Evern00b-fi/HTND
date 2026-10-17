@@ -123,6 +123,16 @@ type pruningMoveNode struct {
 func newPruningMoveNode(t *testing.T, consensusConfig *consensus.Config, name string, deferUpdate bool) (
 	*pruningMoveNode, func(),
 ) {
+	db, err := ldb.NewLevelDB(t.TempDir(), 8)
+	if err != nil {
+		t.Fatalf("NewLevelDB: %+v", err)
+	}
+	return newPruningMoveNodeWithDatabase(t, consensusConfig, name, deferUpdate, db)
+}
+
+func newPruningMoveNodeWithDatabase(t *testing.T, consensusConfig *consensus.Config, name string,
+	deferUpdate bool, db database.Database,
+) (*pruningMoveNode, func()) {
 	consensusConfig.POWScores = []uint64{math.MaxUint64}
 	consensusConfig.K = append([]externalapi.KType(nil), consensusConfig.K...)
 	consensusConfig.K[0] = 0
@@ -138,10 +148,6 @@ func newPruningMoveNode(t *testing.T, consensusConfig *consensus.Config, name st
 	source, teardownSource, err := factory.NewTestConsensus(consensusConfig, name)
 	if err != nil {
 		t.Fatalf("NewTestConsensus: %+v", err)
-	}
-	db, err := ldb.NewLevelDB(t.TempDir(), 8)
-	if err != nil {
-		t.Fatalf("NewLevelDB: %+v", err)
 	}
 	dbPrefix := &prefix.Prefix{}
 	nodeConfig := *consensusConfig
