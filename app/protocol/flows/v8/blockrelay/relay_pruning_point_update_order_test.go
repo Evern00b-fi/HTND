@@ -145,7 +145,7 @@ type relayOrderContext struct {
 
 func (c *relayOrderContext) Domain() domain.Domain { return c.domain }
 
-func (c *relayOrderContext) Broadcast(message appmessage.Message) error {
+func (c *relayOrderContext) BroadcastExcept(message appmessage.Message, excluded *peerpkg.Peer) error {
 	if inv, ok := message.(*appmessage.MsgInvRelayBlock); ok {
 		c.order.mu.Lock()
 		if c.order.moving != nil && inv.Hash.Equal(c.order.moving) {
@@ -155,7 +155,7 @@ func (c *relayOrderContext) Broadcast(message appmessage.Message) error {
 		}
 		c.order.mu.Unlock()
 	}
-	return c.FlowContext.Broadcast(message)
+	return c.FlowContext.BroadcastExcept(message, excluded)
 }
 
 func (c *relayOrderContext) UpdatePruningPointIfRequired() {

@@ -53,7 +53,7 @@ type RelayInvsContext interface {
 	OnNewBlockTemplate() error
 	OnPruningPointUTXOSetOverride() error
 	SharedRequestedBlocks() *flowcontext.SharedRequestedBlocks
-	Broadcast(message appmessage.Message) error
+	BroadcastExcept(message appmessage.Message, excluded *peerpkg.Peer) error
 	AddOrphan(orphanBlock *externalapi.DomainBlock)
 	GetOrphanRoots(orphanHash *externalapi.DomainHash) ([]*externalapi.DomainHash, bool, error)
 	IsOrphan(blockHash *externalapi.DomainHash) bool
@@ -435,7 +435,12 @@ func (flow *handleRelayInvsFlow) start() error {
 			if block.PoWHash != "" {
 				blockHash := consensushashing.BlockHash(block)
 				log.Debugf("Relaying block %s", blockHash)
-				err = flow.relayBlock(block)
+				// The peer announced this block to us, so it does not need the inv back.
+				var sender *peerpkg.Peer
+				if blockHash.Equal(inv.Hash) {
+					sender = flow.peer
+				}
+				err = flow.relayBlock(block, sender)
 				if err != nil {
 					return err
 				}
@@ -575,12 +580,13 @@ func (flow *handleRelayInvsFlow) processBlock(_ *externalapi.DomainHash, block *
 	return nil
 }
 
-func (flow *handleRelayInvsFlow) relayBlock(block *externalapi.DomainBlock) error {
+// relayBlock announces the block to all the ready peers except sender, which may be nil.
+func (flow *handleRelayInvsFlow) relayBlock(block *externalapi.DomainBlock, sender *peerpkg.Peer) error {
 	if block.PoWHash == "" && block.Header.Version() >= constants.PoWIntegrityMinVersion {
 		return nil
 	}
 	blockHash := consensushashing.BlockHash(block)
-	return flow.Broadcast(appmessage.NewMsgInvBlock(blockHash))
+	return flow.BroadcastExcept(appmessage.NewMsgInvBlock(blockHash), sender)
 }
 
 func (flow *handleRelayInvsFlow) processOrphan(block *externalapi.DomainBlock) error {
