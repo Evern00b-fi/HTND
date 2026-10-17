@@ -261,6 +261,15 @@ func New(consensusConfig *consensus.Config, mempoolConfig *mempool.Config, db in
 		consensusEventsChannel: consensusEventsChan,
 	}
 
+	constructionOK := false
+	defer func() {
+		if !constructionOK {
+			if staging := domainInstance.StagingConsensus(); staging != nil {
+				staging.Close()
+			}
+			domainInstance.Consensus().Close()
+		}
+	}()
 	if shouldMigrate {
 		err := domainInstance.migrate()
 		if err != nil {
@@ -274,5 +283,6 @@ func New(consensusConfig *consensus.Config, mempoolConfig *mempool.Config, db in
 	consensusReference := consensusreference.NewConsensusReference(&domainInstance.consensus)
 	domainInstance.miningManager = miningManagerFactory.NewMiningManager(consensusReference, &consensusConfig.Params, mempoolConfig)
 	miningManagerForDisqualification.Store(&domainInstance.miningManager)
+	constructionOK = true
 	return domainInstance, nil
 }

@@ -267,6 +267,15 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 	if err != nil {
 		return nil, err
 	}
+	constructionOK := false
+	defer func() {
+		if !constructionOK {
+			if staging := domain.StagingConsensus(); staging != nil {
+				staging.Close()
+			}
+			domain.Consensus().Close()
+		}
+	}()
 	bindDisqualifiedStreakRecovery(domain, cfg.ShutdownOnDisqualifiedStreak)
 
 	netAdapter, err := netadapter.NewNetAdapter(cfg)
@@ -320,6 +329,7 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 		log.Infof("Auto-updater initialized (channel: %s, interval: %v, autoreport: %v)", updaterConfig.UpdateChannel, updaterConfig.CheckInterval, updaterConfig.AutoReportIssues)
 	}
 
+	constructionOK = true
 	return &ComponentManager{
 		cfg:               cfg,
 		protocolManager:   protocolManager,
