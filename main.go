@@ -28,9 +28,10 @@ const defaultMemoryLimit = 8_000_000_000
 
 // applyDefaultMemoryLimit sets defaultMemoryLimit unless GOMEMLIMIT is set. The Go runtime has already applied a set
 // GOMEMLIMIT, in every form it accepts ("4GiB", "off", plain bytes); this used to re-parse it as a plain integer and
-// replace anything else with the default, so GOMEMLIMIT=4GiB on a small machine ran with an 8 GB limit.
+// replace anything else with the default, so GOMEMLIMIT=4GiB on a small machine ran with an 8 GB limit. The runtime
+// treats an empty GOMEMLIMIT as unset, so htnd does too.
 func applyDefaultMemoryLimit(lookupEnv func(string) (string, bool), setMemoryLimit func(int64) int64) {
-	if _, isSet := lookupEnv("GOMEMLIMIT"); isSet {
+	if value, _ := lookupEnv("GOMEMLIMIT"); value != "" {
 		return
 	}
 	setMemoryLimit(defaultMemoryLimit)

@@ -225,7 +225,7 @@ func testPruningPointMoveReturnsBeforeItsUTXOSetUpdate(t *testing.T, consensusCo
 	if n.db.started != 2 {
 		t.Errorf("%d updates ran, want 2", n.db.started)
 	}
-	pairs, err := n.node.GetPruningPointUTXOs(pruningPoint, nil, math.MaxInt32)
+	pairs, err := n.node.GetPruningPointUTXOs(pruningPoint, nil, 1000)
 	if err != nil || len(pairs) == 0 {
 		t.Fatalf("GetPruningPointUTXOs after the update: %d entries, %v", len(pairs), err)
 	}
