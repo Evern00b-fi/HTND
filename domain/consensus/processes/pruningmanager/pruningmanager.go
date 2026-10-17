@@ -69,6 +69,12 @@ type pruningManager struct {
 	lastPruningTime            time.Time
 	cachedPruningPoint         *externalapi.DomainHash
 	cachedPruningPointAnticone []*externalapi.DomainHash
+
+	// requestUTXOSetScan is set with Config.DeferPruningPointUTXOSetUpdate: UpdatePruningPointIfRequired then only
+	// writes the diff and calls it, and ScanPruningPointUTXOSet finishes the update without the consensus lock.
+	// appliedUTXOSetDiff records the diff written, and is guarded by the consensus lock.
+	requestUTXOSetScan func()
+	appliedUTXOSetDiff *appliedUTXOSetDiff
 }
 
 // New instantiates a new PruningManager
@@ -106,6 +112,7 @@ func New(
 	pruningInterval time.Duration,
 	shouldSanityCheckPruningUTXOSet bool,
 	autoExodusExport func(*externalapi.DomainHash),
+	requestUTXOSetScan func(),
 	k []externalapi.KType,
 	difficultyAdjustmentWindowSize []int,
 	targetTimePerBlock []time.Duration,
@@ -143,6 +150,7 @@ func New(
 		pruningInterval:                 pruningInterval,
 		shouldSanityCheckPruningUTXOSet: shouldSanityCheckPruningUTXOSet,
 		autoExodusExport:                autoExodusExport,
+		requestUTXOSetScan:              requestUTXOSetScan,
 		k:                               k,
 		difficultyAdjustmentWindowSize:  difficultyAdjustmentWindowSize,
 		targetTimePerBlock:              targetTimePerBlock,
@@ -624,8 +632,8 @@ func (pm *pruningManager) savePruningPoint(stagingArea *model.StagingArea, pruni
 	}
 	pm.pruningStore.StageStartUpdatingPruningPointUTXOSet(stagingArea)
 
-	// Call UpdatePruningPointIfRequired immediately after setting the flag
-	// Rather than after every single validate_and_insert_block
+	// Reads the committed flag, not the one staged above: this finishes writing the previous pruning point's pending
+	// diff, if any, so the update for this one starts from its predecessor's complete set.
 	err = pm.UpdatePruningPointIfRequired()
 	if err != nil {
 		return err
@@ -1227,21 +1235,10 @@ func (pm *pruningManager) validateUTXOSetFitsCommitment(stagingArea *model.Stagi
 	}
 	defer utxoSetIterator.Close()
 
-	utxoSetMultiset := multiset.New()
-	stats := &utxoSetStats{}
-	for ok := utxoSetIterator.First(); ok; ok = utxoSetIterator.Next() {
-		outpoint, entry, err := utxoSetIterator.Get()
-		if err != nil {
-			return nil, nil, err
-		}
-		serializedUTXO, err := utxo.SerializeUTXO(entry, outpoint)
-		if err != nil {
-			return nil, nil, err
-		}
-		utxoSetMultiset.Add(serializedUTXO)
-		stats.add(entry)
+	utxoSetHash, stats, err := hashUTXOSet(utxoSetIterator, nil)
+	if err != nil {
+		return nil, nil, err
 	}
-	utxoSetHash := utxoSetMultiset.Hash()
 
 	header, err := pm.blockHeaderStore.BlockHeader(pm.databaseContext, stagingArea, pruningPointHash)
 	if err != nil {
@@ -1258,6 +1255,39 @@ func (pm *pruningManager) validateUTXOSetFitsCommitment(stagingArea *model.Stagi
 	log.Debugf("Validated the pruning point %s UTXO commitment: %s (%s)", pruningPointHash, utxoSetHash, stats)
 
 	return utxoSetHash, stats, nil
+}
+
+// errUTXOSetScanStopped is returned by hashUTXOSet when its stop function ended the walk.
+var errUTXOSetScanStopped = errors.New("the UTXO set scan was stopped")
+
+// utxoSetScanStopCheckInterval is how many entries hashUTXOSet hashes between calls to its stop function: about
+// 50ms of hashing.
+const utxoSetScanStopCheckInterval = 4096
+
+// hashUTXOSet returns the multiset hash of the UTXO set utxoSetIterator walks, and its stats. If stop is not nil, it
+// is called before the first entry and then every utxoSetScanStopCheckInterval entries, and ends the walk with
+// errUTXOSetScanStopped when it returns true. The stats returned with that error cover the entries hashed so far.
+func hashUTXOSet(utxoSetIterator externalapi.ReadOnlyUTXOSetIterator, stop func() bool) (
+	*externalapi.DomainHash, *utxoSetStats, error,
+) {
+	utxoSetMultiset := multiset.New()
+	stats := &utxoSetStats{}
+	for ok := utxoSetIterator.First(); ok; ok = utxoSetIterator.Next() {
+		if stop != nil && stats.entries%utxoSetScanStopCheckInterval == 0 && stop() {
+			return nil, stats, errUTXOSetScanStopped
+		}
+		outpoint, entry, err := utxoSetIterator.Get()
+		if err != nil {
+			return nil, nil, err
+		}
+		serializedUTXO, err := utxo.SerializeUTXO(entry, outpoint)
+		if err != nil {
+			return nil, nil, err
+		}
+		utxoSetMultiset.Add(serializedUTXO)
+		stats.add(entry)
+	}
+	return utxoSetMultiset.Hash(), stats, nil
 }
 
 // This function takes 2 points (currentPruningHash, previousPruningHash) and traverses the UTXO diff children DAG
@@ -2201,6 +2231,9 @@ func (pm *pruningManager) UpdatePruningPointIfRequired() error {
 	if !hadStartedUpdatingPruningPointUTXOSet {
 		return nil
 	}
+	if pm.requestUTXOSetScan != nil {
+		return pm.applyPruningPointUTXOSetDiffAndRequestScan()
+	}
 
 	log.Infof("Pruning point UTXO set update is required")
 	err = pm.updatePruningPoint()
@@ -2557,28 +2590,11 @@ func (pm *pruningManager) updatePruningPoint() error {
 		return err
 	}
 
-	utxoSetDiff, methodUsed, err := pm.pruningPointUTXOSetDiff(stagingArea, pruningPoint)
+	applied, err := pm.applyPruningPointUTXOSetDiff(stagingArea, pruningPoint)
 	if err != nil {
 		return err
 	}
-	log.Infof("Restored the pruning point UTXO set (diff method: %s)", methodUsed)
-
-	// Recorded before the set is written, so an interruption from here on resumes with this method.
-	err = pm.pruningStore.StorePruningPointUTXOSetUpdateMethod(pm.databaseContext, pruningPoint, methodUsed)
-	if err != nil {
-		return err
-	}
-
-	log.Info("Updating the pruning point UTXO set")
-	err = pm.pruningStore.UpdatePruningPointUTXOSet(pm.databaseContext, utxoSetDiff)
-	if err != nil {
-		return err
-	}
-
-	// The diff is written. Nothing below needs it, so release it before the full-set validation pass.
-	utxoSetDiff = nil
-	debug.FreeOSMemory() // import "runtime/debug"
-	logger.LogMemoryStats(log, "updatePruningPoint: diff released")
+	methodUsed := applied.method
 
 	if !pruningPoint.Equal(pm.genesisHash) {
 		log.Info("Validating that the pruning point UTXO set this node will serve fits its commitment")
@@ -2596,6 +2612,53 @@ func (pm *pruningManager) updatePruningPoint() error {
 			pruningPoint)
 	}
 
+	return pm.finishPruningPointUTXOSetUpdate(stagingArea, pruningPoint)
+}
+
+// appliedUTXOSetDiff describes the diff applyPruningPointUTXOSetDiff wrote into the pruning point UTXO set.
+type appliedUTXOSetDiff struct {
+	pruningPoint    *externalapi.DomainHash
+	method          string
+	toAdd, toRemove int
+}
+
+// applyPruningPointUTXOSetDiff writes the diff from the previous pruning point's UTXO set to pruningPoint's into the
+// pruning point UTXO set.
+func (pm *pruningManager) applyPruningPointUTXOSetDiff(stagingArea *model.StagingArea,
+	pruningPoint *externalapi.DomainHash,
+) (*appliedUTXOSetDiff, error) {
+	utxoSetDiff, methodUsed, err := pm.pruningPointUTXOSetDiff(stagingArea, pruningPoint)
+	if err != nil {
+		return nil, err
+	}
+	log.Infof("Restored the pruning point UTXO set (diff method: %s)", methodUsed)
+
+	// Recorded before the set is written, so an interruption from here on resumes with this method.
+	err = pm.pruningStore.StorePruningPointUTXOSetUpdateMethod(pm.databaseContext, pruningPoint, methodUsed)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info("Updating the pruning point UTXO set")
+	err = pm.pruningStore.UpdatePruningPointUTXOSet(pm.databaseContext, utxoSetDiff)
+	if err != nil {
+		return nil, err
+	}
+	applied := &appliedUTXOSetDiff{pruningPoint: pruningPoint, method: methodUsed,
+		toAdd: utxoSetDiff.ToAdd().Len(), toRemove: utxoSetDiff.ToRemove().Len()}
+
+	// The diff is written. Nothing below needs it, so release it before the full-set validation pass.
+	utxoSetDiff = nil
+	debug.FreeOSMemory() // import "runtime/debug"
+	logger.LogMemoryStats(log, "updatePruningPoint: diff released")
+	return applied, nil
+}
+
+// finishPruningPointUTXOSetUpdate deletes the past blocks below the pruning point, if due, and clears the pending
+// update flag in the same commit. The pruning point UTXO set must already have passed its commitment check.
+func (pm *pruningManager) finishPruningPointUTXOSetUpdate(stagingArea *model.StagingArea,
+	pruningPoint *externalapi.DomainHash,
+) error {
 	var newPruningTime *time.Time
 	if pm.shouldDeferDeletion(stagingArea, pruningPoint) {
 		log.Infof("Pruning point advanced, but block deletion deferred (data retention/interval not met)")
@@ -2606,7 +2669,7 @@ func (pm *pruningManager) updatePruningPoint() error {
 		log.Infof("Pruning point advanced, but block deletion waits for --deletion-depth=%d", pm.deletionDepth)
 	} else {
 		log.Infof("Deletion of past blocks below %s", deletionPoint)
-		err = pm.deletePastBlocks(stagingArea, deletionPoint)
+		err := pm.deletePastBlocks(stagingArea, deletionPoint)
 		if err != nil {
 			return err
 		}
@@ -2622,7 +2685,7 @@ func (pm *pruningManager) updatePruningPoint() error {
 	pm.pruningStore.StageFinishUpdatingPruningPointUTXOSet(stagingArea)
 
 	log.Info("Commit all changes")
-	err = staging.CommitAllChanges(pm.databaseContext, stagingArea)
+	err := staging.CommitAllChanges(pm.databaseContext, stagingArea)
 	if err != nil {
 		return err
 	}

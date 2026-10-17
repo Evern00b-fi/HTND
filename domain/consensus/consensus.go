@@ -96,6 +96,9 @@ type consensus struct {
 	disqualificationStreak disqualificationStreak
 	// servedUTXOSetCheck memoises CheckUTXOHealth. It has its own lock.
 	servedUTXOSetCheck servedUTXOSetCheck
+	// pruningPointUTXOSetScanner checks the pruning point UTXO set against its commitment without the lock, with
+	// deferPruningPointUTXOSetUpdate.
+	pruningPointUTXOSetScanner pruningPointUTXOSetScanner
 }
 
 func (s *consensus) exportPruningPointExodusBundle(pruningPoint *externalapi.DomainHash, exportRoot, network string) {
@@ -174,7 +177,8 @@ func (s *consensus) ValidateAndInsertBlockWithTrustedData(block *externalapi.Blo
 	if err != nil {
 		return err
 	}
-	// Nothing is announced on this path, so a pruning point move it made is finished here, as before.
+	// Nothing is announced on this path, so a pruning point move it made is updated here, as before (with
+	// deferPruningPointUTXOSetUpdate, the set is then checked against its commitment in the background).
 	return s.pruningManager.UpdatePruningPointIfRequired()
 }
 
@@ -502,7 +506,8 @@ func (s *consensus) ValidateAndInsertBlock(block *externalapi.DomainBlock, updat
 // add blocks call it after their attempt to announce them, so the block that moved the pruning point usually reaches
 // peers before the update holds the consensus lock. Other block-adding flows, IterateUTXOSetAtBlockFromAcceptanceData,
 // trusted-data insertion, ResolveVirtual and the next pruning point move run a pending update too, so it can also
-// start earlier.
+// start earlier. With deferPruningPointUTXOSetUpdate the update writes the set and returns: the check against the
+// commitment, which takes minutes, and the rest of the update run without the lock (pruningPointUTXOSetScanner).
 func (s *consensus) UpdatePruningPointIfRequired() error {
 	// Checked without the lock first: this runs after every added block and is almost always a no-op.
 	pending, err := s.pruningStore.HadStartedUpdatingPruningPointUTXOSet(s.databaseContext)
@@ -2607,6 +2612,18 @@ func (s *consensus) IterateUTXOSetAtBlockFromAcceptanceData(blockHash *externala
 	err := s.pruningManager.UpdatePruningPointIfRequired()
 	if err != nil {
 		return err
+	}
+	// With deferPruningPointUTXOSetUpdate the update finishes only after the set passed its commitment check, in the
+	// background. Until then the set is not read, as it is not served.
+	if s.deferPruningPointUTXOSetUpdate {
+		pending, err := s.pruningStore.HadStartedUpdatingPruningPointUTXOSet(s.databaseContext)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return errors.New("the pruning point UTXO set is still being checked against its commitment; " +
+				"try again in a few minutes")
+		}
 	}
 
 	stagingArea := model.NewStagingArea()

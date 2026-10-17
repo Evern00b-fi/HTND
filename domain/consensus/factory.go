@@ -106,6 +106,10 @@ type Config struct {
 	// AutoExodusExportDir is the parent directory for those best-effort diagnostic bundles.
 	EnableAutoExodusExportOnPruning bool
 	AutoExodusExportDir             string
+	// OnPruningPointUTXOSetMismatch is called, with DeferPruningPointUTXOSetUpdate, when the pruning point UTXO set
+	// does not match the commitment in the pruning point's header, after the diagnostic is logged. It must stop the
+	// node. Without it the check panics instead.
+	OnPruningPointUTXOSetMismatch func(err error)
 
 	SkipAddingGenesis bool
 
@@ -406,6 +410,10 @@ func (f *factory) NewConsensus(config *Config, db infrastructuredatabase.Databas
 			go c.exportPruningPointExodusBundle(pruningPoint, config.AutoExodusExportDir, config.Name)
 		}
 	}
+	var requestPruningPointUTXOSetScan func()
+	if config.DeferPruningPointUTXOSetUpdate {
+		requestPruningPointUTXOSetScan = func() { c.requestPruningPointUTXOSetScan() }
+	}
 
 	pruningManager := pruningmanager.New(
 		dbManager,
@@ -440,6 +448,7 @@ func (f *factory) NewConsensus(config *Config, db infrastructuredatabase.Databas
 		config.PruningInterval,
 		config.EnableSanityCheckPruningUTXOSet,
 		autoExodusExport,
+		requestPruningPointUTXOSetScan,
 		config.K,
 		config.DifficultyAdjustmentWindowSize,
 		config.TargetTimePerBlock,
@@ -660,6 +669,10 @@ func (f *factory) NewConsensus(config *Config, db infrastructuredatabase.Databas
 		},
 
 		deferPruningPointUTXOSetUpdate: config.DeferPruningPointUTXOSetUpdate,
+		pruningPointUTXOSetScanner: pruningPointUTXOSetScanner{
+			requests:   make(chan struct{}, 1),
+			onMismatch: config.OnPruningPointUTXOSetMismatch,
+		},
 	}
 
 	if isOldReachabilityInitialized {
@@ -765,6 +778,11 @@ func (f *factory) NewConsensus(config *Config, db infrastructuredatabase.Databas
 		pruningManager.FindAndReproduceRootDisqualification(model.NewStagingArea())
 	}
 
+	// Last: the scan reads the pruning point UTXO set without the lock, and nothing above may write it meanwhile. It
+	// checks a set the updates above wrote.
+	if config.DeferPruningPointUTXOSetUpdate {
+		c.startPruningPointUTXOSetScanner()
+	}
 	return c, false, nil
 }
 

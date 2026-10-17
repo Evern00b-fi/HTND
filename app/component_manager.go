@@ -23,6 +23,7 @@ import (
 	"github.com/HoosatNetwork/HTND/v2/infrastructure/network/connmanager"
 	"github.com/HoosatNetwork/HTND/v2/infrastructure/network/netadapter"
 	"github.com/HoosatNetwork/HTND/v2/infrastructure/network/netadapter/id"
+	"github.com/HoosatNetwork/HTND/v2/infrastructure/os/signal"
 	"github.com/HoosatNetwork/HTND/v2/util"
 	"github.com/HoosatNetwork/HTND/v2/util/panics"
 	"github.com/pkg/errors"
@@ -175,10 +176,27 @@ func (a *ComponentManager) Stop() bool {
 		return false
 	}
 
+	// The pruning point UTXO set check walks the database in the background; stopped before the database is closed.
+	domainInstance := a.protocolManager.Context().Domain()
+	if stagingConsensus := domainInstance.StagingConsensus(); stagingConsensus != nil {
+		stagingConsensus.Close()
+	}
+	domainInstance.Consensus().Close()
+
 	// The connection manager's loop and its DNS seeding goroutines are not waited for, and can still record addresses
 	// after the database is closed.
 	a.addressManager.Stop()
 	return true
+}
+
+// stopOnPruningPointUTXOSetMismatch stops the node when the pruning point UTXO set it computed does not match the
+// commitment in the pruning point's header. Consensus has logged the diagnostic. The set was not served and no blocks
+// were deleted; a restart checks the set again.
+func stopOnPruningPointUTXOSetMismatch(error) {
+	log.Criticalf("Stopping the node: its pruning point UTXO set does not match the chain")
+	spawn("stopOnPruningPointUTXOSetMismatch", func() {
+		signal.ShutdownRequestChannel <- struct{}{}
+	})
 }
 
 // NewComponentManager returns a new ComponentManager instance.
@@ -217,6 +235,7 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 		MaxConsecutiveDisqualifiedBlocks:  maxConsecutiveDisqualifiedBlocks,
 		OnDisqualifiedBlockStreak:         recoverFromDisqualifiedBlockStreak,
 		OnDisqualification:                logDisqualification,
+		OnPruningPointUTXOSetMismatch:     stopOnPruningPointUTXOSetMismatch,
 	}
 	mempoolConfig := mempool.DefaultConfig(&consensusConfig.Params)
 	mempoolConfig.MaximumOrphanTransactionCount = cfg.MaxOrphanTxs
