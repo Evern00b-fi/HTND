@@ -54,7 +54,7 @@ type RelayInvsContext interface {
 	OnPruningPointUTXOSetOverride() error
 	SharedRequestedBlocks() *flowcontext.SharedRequestedBlocks
 	BroadcastExcept(message appmessage.Message, excluded *peerpkg.Peer) error
-	AddOrphan(orphanBlock *externalapi.DomainBlock)
+	AddOrphan(orphanBlock *externalapi.DomainBlock) (bool,error)
 	GetOrphanRoots(orphanHash *externalapi.DomainHash) ([]*externalapi.DomainHash, bool, error)
 	IsOrphan(blockHash *externalapi.DomainHash) bool
 	IsIBDRunning() bool
