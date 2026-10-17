@@ -19,8 +19,8 @@ var ErrPruningPointUTXOSetMismatch = errors.New("[PP-COMMITMENT] HALTING: the pr
 
 // applyPruningPointUTXOSetDiffAndRequestScan is UpdatePruningPointIfRequired with
 // Config.DeferPruningPointUTXOSetUpdate. It writes the pending diff into the pruning point UTXO set, once per pruning
-// point, and requests ScanPruningPointUTXOSet, which checks the set against the commitment without the consensus lock
-// and then finishes the update. Until then the update stays pending, so the set is not served.
+// point, and requests ScanPruningPointUTXOSet, which hashes the set without the consensus lock, then compares the
+// commitment and finishes the update under the lock. Until then the update stays pending, so the set is not served.
 func (pm *pruningManager) applyPruningPointUTXOSetDiffAndRequestScan() error {
 	stagingArea := model.NewStagingArea()
 	pruningPoint, err := pm.pruningStore.PruningPoint(pm.databaseContext, stagingArea)

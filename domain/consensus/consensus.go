@@ -96,8 +96,8 @@ type consensus struct {
 	disqualificationStreak disqualificationStreak
 	// servedUTXOSetCheck memoises CheckUTXOHealth. It has its own lock.
 	servedUTXOSetCheck servedUTXOSetCheck
-	// pruningPointUTXOSetScanner checks the pruning point UTXO set against its commitment without the lock, with
-	// deferPruningPointUTXOSetUpdate.
+	// pruningPointUTXOSetScanner hashes the pruning point UTXO set without the lock, then compares its commitment
+	// and finishes the update under the lock, with deferPruningPointUTXOSetUpdate.
 	pruningPointUTXOSetScanner pruningPointUTXOSetScanner
 }
 
@@ -506,8 +506,9 @@ func (s *consensus) ValidateAndInsertBlock(block *externalapi.DomainBlock, updat
 // add blocks call it after their attempt to announce them, so the block that moved the pruning point usually reaches
 // peers before the update holds the consensus lock. Other block-adding flows, IterateUTXOSetAtBlockFromAcceptanceData,
 // trusted-data insertion, ResolveVirtual and the next pruning point move run a pending update too, so it can also
-// start earlier. With deferPruningPointUTXOSetUpdate the update writes the set and returns: the check against the
-// commitment, which takes minutes, and the rest of the update run without the lock (pruningPointUTXOSetScanner).
+// start earlier. With deferPruningPointUTXOSetUpdate the update writes the set and returns: only the full-set hash
+// walk runs without the lock (pruningPointUTXOSetScanner). Diff derivation and application, commitment comparison,
+// and finalization (including past block deletion) still hold the lock.
 func (s *consensus) UpdatePruningPointIfRequired() error {
 	// Checked without the lock first: this runs after every added block and is almost always a no-op.
 	pending, err := s.pruningStore.HadStartedUpdatingPruningPointUTXOSet(s.databaseContext)

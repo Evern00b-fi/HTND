@@ -10,8 +10,8 @@ import (
 
 // pruningPointUTXOSetScanner runs, with Config.DeferPruningPointUTXOSetUpdate, the check of the pruning point UTXO
 // set against its commitment that finishes a pruning point UTXO set update (PruningManager.ScanPruningPointUTXOSet).
-// It runs on its own goroutine, so block processing does not wait for the minutes it takes. One check runs at a time,
-// and the requests made meanwhile coalesce into one more.
+// It runs on its own goroutine; only the full-set hash walk runs without the consensus lock. One check runs at a
+// time, and the requests made meanwhile coalesce into one more.
 type pruningPointUTXOSetScanner struct {
 	requests   chan struct{}
 	onMismatch func(error)

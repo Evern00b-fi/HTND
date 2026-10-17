@@ -886,6 +886,7 @@ func (f *factory) NewTestConsensus(config *Config, testName string) (
 	}
 	tstConsensus.testBlockBuilder = blockbuilder.NewTestBlockBuilder(consensusAsImplementation.blockBuilder, tstConsensus)
 	teardown = func(keepDataDir bool) {
+		consensusAsInterface.Close()
 		db.Close()
 		if !keepDataDir {
 			err := os.RemoveAll(datadir)

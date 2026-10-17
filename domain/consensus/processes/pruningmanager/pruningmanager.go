@@ -71,7 +71,8 @@ type pruningManager struct {
 	cachedPruningPointAnticone []*externalapi.DomainHash
 
 	// requestUTXOSetScan is set with Config.DeferPruningPointUTXOSetUpdate: UpdatePruningPointIfRequired then only
-	// writes the diff and calls it, and ScanPruningPointUTXOSet finishes the update without the consensus lock.
+	// writes the diff and calls it. ScanPruningPointUTXOSet hashes without the consensus lock, then reacquires it
+	// to compare the commitment and finish the update.
 	// appliedUTXOSetDiff records the diff written, and is guarded by the consensus lock.
 	requestUTXOSetScan func()
 	appliedUTXOSetDiff *appliedUTXOSetDiff
