@@ -188,10 +188,8 @@ func (bp *blockProcessor) validateAndInsertBlock(stagingArea *model.StagingArea,
 		}
 	}
 
-	err = bp.pruningManager.UpdatePruningPointIfRequired()
-	if err != nil {
-		return nil, externalapi.StatusInvalid, err
-	}
+	// A pruning point move above leaves its UTXO set update pending. The consensus runs it next, unless it is configured
+	// to leave it to the caller, which announces this block first (Config.DeferPruningPointUTXOSetUpdate).
 
 	log.Debug(logger.NewLogClosure(func() string {
 		// Clamped rather than indexed straight with the process-global version: that global is a

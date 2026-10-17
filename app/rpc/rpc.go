@@ -164,6 +164,11 @@ func (m *Manager) handleIncomingMessages(router *router.Router, incomingRoute *r
 }
 
 func (m *Manager) handleRequest(router *router.Router, request appmessage.Message) error {
+	if !m.startRequestHandler() {
+		return nil // Shutting down: the request is dropped and its connection is being closed.
+	}
+	defer m.handlersRunning.Done()
+
 	response, err := handlers[request.Command()](m.context, router, request)
 	if err != nil {
 		return err

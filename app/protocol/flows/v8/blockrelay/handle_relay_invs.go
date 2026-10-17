@@ -59,6 +59,7 @@ type RelayInvsContext interface {
 	IsIBDRunning() bool
 	IsRecoverableError(err error) bool
 	IsNearlySynced() (bool, error)
+	UpdatePruningPointIfRequired()
 }
 
 type invRelayBlock struct {
@@ -449,6 +450,9 @@ func (flow *handleRelayInvsFlow) start() error {
 		if err != nil {
 			return err
 		}
+
+		// Only after the attempt to announce the block: if it moved the pruning point, the update holds the consensus lock.
+		flow.UpdatePruningPointIfRequired()
 	}
 }
 

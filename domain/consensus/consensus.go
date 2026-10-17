@@ -32,6 +32,8 @@ type consensus struct {
 	lock            *sync.Mutex
 	databaseContext model.DBManager
 
+	deferPruningPointUTXOSetUpdate bool
+
 	genesisBlock *externalapi.DomainBlock
 	genesisHash  *externalapi.DomainHash
 
@@ -172,7 +174,8 @@ func (s *consensus) ValidateAndInsertBlockWithTrustedData(block *externalapi.Blo
 	if err != nil {
 		return err
 	}
-	return nil
+	// Nothing is announced on this path, so a pruning point move it made is finished here, as before.
+	return s.pruningManager.UpdatePruningPointIfRequired()
 }
 
 // Init initializes consensus
@@ -495,6 +498,23 @@ func (s *consensus) ValidateAndInsertBlock(block *externalapi.DomainBlock, updat
 	return s.validateAndInsertBlockWithLock(block, updateVirtual, powSkip)
 }
 
+// UpdatePruningPointIfRequired runs the pruning point UTXO set update a block insertion left pending. Callers that
+// add blocks call it after their attempt to announce them, so the block that moved the pruning point usually reaches
+// peers before the update holds the consensus lock. Other block-adding flows, IterateUTXOSetAtBlockFromAcceptanceData,
+// trusted-data insertion, ResolveVirtual and the next pruning point move run a pending update too, so it can also
+// start earlier.
+func (s *consensus) UpdatePruningPointIfRequired() error {
+	// Checked without the lock first: this runs after every added block and is almost always a no-op.
+	pending, err := s.pruningStore.HadStartedUpdatingPruningPointUTXOSet(s.databaseContext)
+	if err != nil || !pending {
+		return err
+	}
+
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return s.pruningManager.UpdatePruningPointIfRequired()
+}
+
 func (s *consensus) validateAndInsertBlockWithLock(block *externalapi.DomainBlock, updateVirtual bool, powSkip bool) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -510,6 +530,12 @@ func (s *consensus) validateAndInsertBlockNoLock(block *externalapi.DomainBlock,
 	virtualChangeSet, blockStatus, err := s.blockProcessor.ValidateAndInsertBlock(block, updateVirtual, powSkip)
 	if err != nil {
 		return nil, err
+	}
+	if !s.deferPruningPointUTXOSetUpdate {
+		err = s.pruningManager.UpdatePruningPointIfRequired()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// If block has a body, and yet virtual was not updated -- signify that virtual is in non-updated state
@@ -914,6 +940,19 @@ func (s *consensus) GetPruningPointUTXOs(expectedPruningPointHash *externalapi.D
 		return nil, errors.Wrapf(ruleerrors.ErrWrongPruningPointHash, "expected pruning point %s but got %s",
 			expectedPruningPointHash,
 			pruningPointHash)
+	}
+
+	// Until a pending update of the pruning point UTXO set is done (Config.DeferPruningPointUTXOSetUpdate), the stored
+	// set is still the previous pruning point's. Refuse, as for a pruning point this node does not have, rather than
+	// run the update here: it takes minutes, and a request must not start it before the block that moved the pruning
+	// point was announced.
+	updating, err := s.pruningStore.HadStartedUpdatingPruningPointUTXOSet(s.databaseContext)
+	if err != nil {
+		return nil, err
+	}
+	if updating {
+		return nil, errors.Wrapf(ruleerrors.ErrWrongPruningPointHash, "the UTXO set of pruning point %s is still "+
+			"being updated", pruningPointHash)
 	}
 
 	// HTN-005's serve half, gated at HardForkGates.RefuseMismatchedImportVersion: once the pruning
@@ -2562,6 +2601,13 @@ func (s *consensus) IterateUTXOSetAtBlockFromAcceptanceData(blockHash *externala
 ) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+
+	// The pruning point UTXO set is read below: finish an update a block insertion left pending, so a moved pruning
+	// point is never paired with its predecessor's set.
+	err := s.pruningManager.UpdatePruningPointIfRequired()
+	if err != nil {
+		return err
+	}
 
 	stagingArea := model.NewStagingArea()
 
