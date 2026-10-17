@@ -15,9 +15,10 @@ import (
 
 // DB defines a thin wrapper around Pebble.
 type DB struct {
-	db      *pebble.DB
-	cursors []*DBCursor // Track all cursors
-	mu      sync.Mutex  // Protect cursors slice
+	db          *pebble.DB
+	cursors     []*DBCursor // Track all cursors
+	mu          sync.Mutex  // Protect cursors slice
+	walDisabled bool
 }
 
 // OpenPebbleDB opens a Pebble instance defined by the given path, and returns pebble's error when it
@@ -34,7 +35,7 @@ func OpenPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	return &DB{db: db}, nil
+	return &DB{db: db, walDisabled: options.DisableWAL}, nil
 }
 
 // NewPebbleDB opens a Pebble instance defined by the given path. It is meant for the node's own
@@ -71,7 +72,8 @@ func NewPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
 	}
 
 	dbInstance := &DB{
-		db: db,
+		db:          db,
+		walDisabled: options.DisableWAL,
 	}
 	return dbInstance, nil
 }
@@ -101,8 +103,18 @@ func (db *DB) Close() error {
 	db.cursors = nil // Clear cursors
 	db.mu.Unlock()
 
+	// Without the write-ahead log, writes still in the memtables exist nowhere else, and pebble's Close
+	// does not flush them, so a clean shutdown lost them.
+	var flushErr error
+	if db.walDisabled {
+		flushErr = db.db.Flush()
+	}
+
 	// Close the database
 	err := db.db.Close()
+	if flushErr != nil {
+		return errors.Wrap(flushErr, "flushing the memtables before closing the database")
+	}
 	return errors.WithStack(err)
 }
 
