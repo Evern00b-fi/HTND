@@ -13,6 +13,7 @@ func TestApplyDefaultMemoryLimit(t *testing.T) {
 		wantSet   bool
 	}{
 		{name: "unset", env: map[string]string{}, wantLimit: defaultMemoryLimit, wantSet: true},
+		{name: "empty", env: map[string]string{"GOMEMLIMIT": ""}, wantLimit: defaultMemoryLimit, wantSet: true},
 		{name: "unit suffix", env: map[string]string{"GOMEMLIMIT": "4GiB"}},
 		{name: "off", env: map[string]string{"GOMEMLIMIT": "off"}},
 		{name: "plain bytes", env: map[string]string{"GOMEMLIMIT": "123456789"}},

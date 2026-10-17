@@ -119,7 +119,11 @@ func setRPCClient(t *testing.T, harness *appHarness) {
 
 func teardownHarness(t *testing.T, harness *appHarness) {
 	harness.rpcClient.Close()
-	harness.app.Stop()
+	if !harness.app.Stop() {
+		// Something may still be using the database, so it is left open.
+		t.Errorf("The app did not stop cleanly; not closing the database")
+		return
+	}
 
 	err := harness.database.Close()
 	if err != nil {

@@ -57,7 +57,7 @@ func New(cfg *config.Config, netAdapter *netadapter.NetAdapter, addressManager *
 		pendingRequested: map[string]*connectionRequest{},
 		activeOutgoing:   map[string]struct{}{},
 		activeIncoming:   map[string]struct{}{},
-		resetLoopChan:    make(chan struct{}),
+		resetLoopChan:    make(chan struct{}, 1),
 		loopTicker:       time.NewTicker(connectionsLoopInterval),
 	}
 
@@ -97,8 +97,14 @@ func (c *ConnectionManager) Stop() {
 	c.run()
 }
 
+// run wakes the connection loop for an immediate iteration. It never blocks: the loop may be in the middle of an
+// iteration or may have returned after Stop, and one pending wake-up is enough, since an iteration handles everything
+// that is pending.
 func (c *ConnectionManager) run() {
-	c.resetLoopChan <- struct{}{}
+	select {
+	case c.resetLoopChan <- struct{}{}:
+	default:
+	}
 }
 
 func (c *ConnectionManager) initiateConnection(address string) error {
