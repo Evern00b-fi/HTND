@@ -153,6 +153,8 @@ func (f *FlowContext) AddBlock(block *externalapi.DomainBlock) error {
 		}
 		return err
 	}
+	defer f.UpdatePruningPointIfRequired()
+
 	err = f.OnNewBlockTemplate()
 	if err != nil {
 		return err
@@ -165,7 +167,6 @@ func (f *FlowContext) AddBlock(block *externalapi.DomainBlock) error {
 	if err != nil {
 		return err
 	}
-	f.UpdatePruningPointIfRequired()
 	return nil
 }
 

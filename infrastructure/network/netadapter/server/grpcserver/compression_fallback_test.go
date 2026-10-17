@@ -155,7 +155,7 @@ func TestP2PServerSupportsCompressedAndUncompressedPeers(t *testing.T) {
 	listener.Close()
 
 	inboundRoutes := make(chan *router.Route, 2)
-	listening, err := NewP2PServer([]string{address})
+	listening, err := NewP2PServer([]string{address}, 2, nil)
 	if err != nil {
 		t.Fatalf("NewP2PServer: %+v", err)
 	}
@@ -175,7 +175,7 @@ func TestP2PServerSupportsCompressedAndUncompressedPeers(t *testing.T) {
 	}
 	defer listening.Stop()
 
-	dialing, err := NewP2PServer(nil)
+	dialing, err := NewP2PServer(nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewP2PServer: %+v", err)
 	}

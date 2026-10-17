@@ -87,10 +87,17 @@ ls -lh ~/bin/HTND
 The minimum command to start a node is:
 
 ```bash
-~/bin/HTND --saferpc
+~/bin/HTND --saferpc --rpclisten=127.0.0.1:42420
 ```
 
-The `--saferpc` flag restricts the RPC interface to local connections only, which is the safest default for most setups.
+`--rpclisten=127.0.0.1:42420` keeps the RPC interface on this machine. Without it, HTND listens for RPC on
+every interface, and the RPC interface has no authentication. If another machine needs RPC (a pool, an explorer),
+replace `127.0.0.1` with a private address, or add a second `--rpclisten` for that address, and allow only those
+clients in the firewall.
+
+`--saferpc` disables selected administrative methods (such as `ShutDown`, `Ban`, `Unban` and `AddPeer`) and
+restricts some expensive queries. It does not bind localhost, authenticate callers, or make RPC read-only:
+`SubmitBlock` and `SubmitTransaction`, for example, stay available.
 
 ---
 
@@ -113,7 +120,7 @@ screen -S htnd
 Inside the screen session, start HTND:
 
 ```bash
-~/bin/HTND --saferpc
+~/bin/HTND --saferpc --rpclisten=127.0.0.1:42420
 ```
 
 To **detach** from the session while leaving HTND running, press:
@@ -159,7 +166,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=htnd
-ExecStart=/home/htnd/bin/HTND --saferpc
+ExecStart=/home/htnd/bin/HTND --saferpc --rpclisten=127.0.0.1:42420
 Restart=on-failure
 RestartSec=5s
 
@@ -241,8 +248,8 @@ Scroll up through the buffer with `Ctrl + A`, then `[`. Press `Q` to exit scroll
 | Check architecture | `uname -m` |
 | Download release | `wget -P ~/ <url>` |
 | Extract to `~/bin/` | `tar -xzf ~/HTND-*.tar.gz -C ~/bin/` |
-| Run manually | `~/bin/HTND --saferpc` |
-| Run in screen | `screen -S htnd` then `~/bin/HTND --saferpc` |
+| Run manually | `~/bin/HTND --saferpc --rpclisten=127.0.0.1:42420` |
+| Run in screen | `screen -S htnd` then `~/bin/HTND --saferpc --rpclisten=127.0.0.1:42420` |
 | Enable as service | `sudo systemctl enable --now htnd` |
 | Follow logs (systemd) | `journalctl -u htnd -f` |
 | Reattach to screen | `screen -r htnd` |

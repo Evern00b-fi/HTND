@@ -2,6 +2,7 @@ package blockrelay
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/HoosatNetwork/HTND/v2/app/appmessage"
@@ -53,7 +54,7 @@ type RelayInvsContext interface {
 	OnPruningPointUTXOSetOverride() error
 	SharedRequestedBlocks() *flowcontext.SharedRequestedBlocks
 	Broadcast(message appmessage.Message) error
-	AddOrphan(orphanBlock *externalapi.DomainBlock)
+	AddOrphan(orphanBlock *externalapi.DomainBlock) (bool, error)
 	GetOrphanRoots(orphanHash *externalapi.DomainHash) ([]*externalapi.DomainHash, bool, error)
 	IsOrphan(blockHash *externalapi.DomainHash) bool
 	IsIBDRunning() bool
@@ -81,6 +82,10 @@ type handleRelayInvsFlow struct {
 	incomingDone  chan struct{}
 	incomingErrMu sync.Mutex
 	incomingErr   error
+
+	// requestedBlocks counts blocks asked for with RequestRelayBlocks and not yet received. The incoming
+	// reader takes one per MsgBlock and refuses a block that no request accounts for.
+	requestedBlocks atomic.Int64
 }
 
 // HandleRelayInvs listens to appmessage.MsgInvRelayBlock messages, requests their corresponding blocks if they
@@ -142,6 +147,13 @@ func (flow *handleRelayInvsFlow) startIncomingReader() {
 					// (Reader keeps draining the router route so it won't saturate.)
 				}
 			case *appmessage.MsgBlock:
+				// Honest peers only send a block in answer to RequestRelayBlocks. Anything else would sit in
+				// blockChan - up to its capacity, each block as large as the P2P message ceiling - until
+				// the next request read it, so it is refused here instead.
+				if flow.requestedBlocks.Add(-1) < 0 {
+					flow.setIncomingErr(protocolerrors.Errorf(true, "received a block that was not requested"))
+					return
+				}
 				select {
 				case flow.blockChan <- m:
 				default:
@@ -375,11 +387,22 @@ func (flow *handleRelayInvsFlow) start() error {
 			switch {
 			case errors.As(err, missingParentsError):
 				if len(missingParentsError.MissingParentHashes) > 0 {
-					err := flow.processOrphan(block)
+					parentsArrived, err := flow.processOrphan(block)
 					if err != nil {
 						log.Infof("Error processing orphan block %s from %s: %s", inv.Hash, flow.netConnection.Address(), err)
 					}
-					continue
+					if err != nil || !parentsArrived {
+						continue
+					}
+					// The missing parents were added while processOrphan waited for the peer's block locator,
+					// so the block is processed now instead of waiting in the orphan set for an IBD.
+					err = flow.processBlock(inv.Hash, block, false)
+					if err != nil {
+						if !errors.Is(err, ruleerrors.ErrDuplicateBlock) {
+							log.Infof("Error processing block %s from %s: %s", inv.Hash, flow.netConnection.Address(), err)
+						}
+						continue
+					}
 				}
 			case errors.Is(err, ruleerrors.ErrDuplicateBlock):
 				continue
@@ -500,6 +523,7 @@ func (flow *handleRelayInvsFlow) requestBlock(requestHash *externalapi.DomainHas
 	defer flow.SharedRequestedBlocks().Remove(requestHash)
 
 	getRelayBlocksMsg := appmessage.NewMsgRequestRelayBlocks([]*externalapi.DomainHash{requestHash})
+	flow.requestedBlocks.Add(1)
 	err := flow.outgoingRoute.Enqueue(getRelayBlocksMsg)
 	if err != nil {
 		return nil, false, err
@@ -570,13 +594,15 @@ func (flow *handleRelayInvsFlow) relayBlock(block *externalapi.DomainBlock) erro
 	return flow.Broadcast(appmessage.NewMsgInvBlock(blockHash))
 }
 
-func (flow *handleRelayInvsFlow) processOrphan(block *externalapi.DomainBlock) error {
+// processOrphan returns true when the block's missing parents were added in the meantime, so the caller
+// should process the block again rather than treat it as an orphan.
+func (flow *handleRelayInvsFlow) processOrphan(block *externalapi.DomainBlock) (bool, error) {
 	blockHash := consensushashing.BlockHash(block)
 
 	// Return if the block has been orphaned from elsewhere already
 	if flow.IsOrphan(blockHash) {
 		log.Debugf("Skipping orphan processing for block %s because it is already an orphan", blockHash)
-		return nil
+		return false, nil
 	}
 
 	// Compare against this block's own correctly-computed version (see the identical fix and
@@ -587,34 +613,41 @@ func (flow *handleRelayInvsFlow) processOrphan(block *externalapi.DomainBlock) e
 	expectedVersion := blockVersionForDAAScore(flow.Config().ActiveNetParams.POWScores, block.Header.DAAScore())
 	if block.Header.Version() != expectedVersion {
 		log.Debugf("Skipping orphan processing for block %s because it is wrong block version", blockHash)
-		return nil
+		return false, nil
 	}
 
 	if block.PoWHash == "" && block.Header.Version() >= constants.PoWIntegrityMinVersion {
 		log.Debugf("Skipping orphan processing for block %s because it is missing pow hash", blockHash)
-		return nil
+		return false, nil
 	}
 
 	// Add the block to the orphan set if it's within orphan resolution range
 	isBlockInOrphanResolutionRange, err := flow.isBlockInOrphanResolutionRange(blockHash)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if isBlockInOrphanResolutionRange {
 		if flow.Config().NetParams().DisallowDirectBlocksOnTopOfGenesis && !flow.Config().AllowSubmitBlockWhenNotSynced {
 			isGenesisVirtualSelectedParent, err := flow.isGenesisVirtualSelectedParent()
 			if err != nil {
-				return err
+				return false, err
 			}
 
 			if isGenesisVirtualSelectedParent {
 				log.Infof("Cannot process orphan %s for a node with only the genesis block. The node needs to IBD to the recent pruning point before normal operation can resume.", blockHash)
-				return nil
+				return false, nil
 			}
 		}
-		flow.AddOrphan(block)
+		added, err := flow.AddOrphan(block)
+		if err != nil {
+			return false, err
+		}
+		if !added {
+			log.Debugf("Block %s is no longer an orphan: its missing parents were added meanwhile", blockHash)
+			return true, nil
+		}
 		log.Debugf("Requesting block %s missing ancestors", blockHash)
-		return flow.AddOrphanRootsToQueue(blockHash)
+		return false, flow.AddOrphanRootsToQueue(blockHash)
 	}
 
 	// Start IBD unless we already are in IBD
@@ -625,7 +658,7 @@ func (flow *handleRelayInvsFlow) processOrphan(block *externalapi.DomainBlock) e
 	case flow.peer.IBDRequestChannel() <- block:
 	default:
 	}
-	return nil
+	return false, nil
 }
 
 func (flow *handleRelayInvsFlow) isGenesisVirtualSelectedParent() (bool, error) {

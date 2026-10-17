@@ -119,12 +119,12 @@ type Flags struct {
 	DisableListen                   bool          `long:"nolisten" description:"Disable listening for incoming connections -- NOTE: Listening is automatically disabled if the --connect or --proxy options are used without also specifying listen interfaces via --listen"`
 	Listeners                       []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces port: 42421, testnet: 42423)"`
 	TargetOutboundPeers             int           `long:"outpeers" description:"Target number of outbound peers"`
-	MaxInboundPeers                 int           `long:"maxinpeers" description:"Max number of inbound peers"`
+	MaxInboundPeers                 int           `long:"maxinpeers" description:"Max number of inbound peers (0 accepts no inbound P2P connections)"`
 	EnableBanning                   bool          `long:"enablebanning" description:"Enable banning of misbehaving peers"`
 	BanDuration                     time.Duration `long:"banduration" description:"How long to ban misbehaving peers. Valid time units are {s, m, h}. Minimum 1 second"`
 	BanThreshold                    uint32        `long:"banthreshold" description:"Maximum allowed ban score before disconnecting and banning misbehaving peers."`
 	Whitelists                      []string      `long:"whitelist" description:"Add an IP network or IP that will not be banned. (eg. 192.168.1.0/24 or ::1)"`
-	RPCListeners                    []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port: 42420, testnet: 16210)"`
+	RPCListeners                    []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default: loopback only, port 42420, testnet: 42422). RPC has no authentication; use 127.0.0.1 unless a firewall restricts access"`
 	RPCCert                         string        `long:"rpccert" description:"File containing the certificate file"`
 	RPCKey                          string        `long:"rpckey" description:"File containing the certificate key"`
 	RPCMaxClients                   int           `long:"rpcmaxclients" description:"Max number of RPC clients for standard connections"`
@@ -581,9 +581,39 @@ func LoadConfig() (*Config, error) {
 	// RPC listener is all addresses on the RPC listen port for the
 	// network we are to connect to.
 	if !cfg.DisableRPC && len(cfg.RPCListeners) == 0 {
-		cfg.RPCListeners = []string{
-			net.JoinHostPort("", cfg.NetParams().RPCPort),
+		rpcPort := cfg.NetParams().RPCPort
+		var listeners []string
+
+		// 1. Check and add IPv4 loopback
+		ipv4Addr := net.JoinHostPort("127.0.0.1", rpcPort)
+		if ln, err := net.Listen("tcp4", ipv4Addr); err == nil {
+			ln.Close()
+			listeners = append(listeners, ipv4Addr)
 		}
+
+		// 2. Check and add IPv6 loopback
+		ipv6Addr := net.JoinHostPort("::1", rpcPort)
+		if ln, err := net.Listen("tcp6", ipv6Addr); err == nil {
+			ln.Close()
+			listeners = append(listeners, ipv6Addr)
+		}
+
+		// 3. Fallback if neither could be bound (e.g., severe network misconfiguration)
+		if len(listeners) == 0 {
+			// Keep the original default behavior so the downstream listener
+			// logic can fail explicitly with a clear error message.
+			listeners = []string{ipv4Addr, ipv6Addr}
+		}
+
+		cfg.RPCListeners = listeners
+	}
+
+	if cfg.MaxInboundPeers < 0 {
+		str := "%s: The maxinpeers option may not be less than 0 -- parsed [%d]"
+		err := errors.Errorf(str, funcName, cfg.MaxInboundPeers)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, err
 	}
 
 	if cfg.RPCMaxConcurrentReqs < 0 {

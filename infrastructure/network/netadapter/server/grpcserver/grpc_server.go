@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,6 +36,12 @@ type gRPCServer struct {
 	maxInboundConnections      int
 	inboundConnectionCount     int
 	inboundConnectionCountLock *sync.Mutex
+
+	// P2P only. refuseAllInbound: --maxinpeers=0 admits no inbound stream, while RPC keeps reading a
+	// zero limit as unlimited. requestedPeerSlots maps each IP-literal --addpeer/--connect address to
+	// whether its one stream outside the limit is taken. Both are guarded by inboundConnectionCountLock.
+	refuseAllInbound   bool
+	requestedPeerSlots map[string]bool
 
 	// compressionFallback is a pointer, like inboundConnectionCountLock, because NewP2PServer embeds
 	// gRPCServer by value and every connection refers back to that copy.
@@ -142,12 +149,6 @@ func (s *gRPCServer) SetOnConnectedHandler(onConnectedHandler server.OnConnected
 }
 
 func (s *gRPCServer) handleInboundConnection(ctx context.Context, stream grpcStream) error {
-	connectionCount, err := s.incrementInboundConnectionCountAndLimitIfRequired()
-	if err != nil {
-		return err
-	}
-	defer s.decrementInboundConnectionCount()
-
 	peerInfo, ok := peer.FromContext(ctx)
 	if !ok {
 		return errors.Errorf("Error getting stream peer info from context")
@@ -157,6 +158,12 @@ func (s *gRPCServer) handleInboundConnection(ctx context.Context, stream grpcStr
 		return errors.Errorf("non-tcp connections are not supported")
 	}
 
+	release, err := s.admitInbound(tcpAddress)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	connection := newConnection(s, tcpAddress, stream, nil)
 
 	err = s.onConnectedHandler(connection)
@@ -164,10 +171,37 @@ func (s *gRPCServer) handleInboundConnection(ctx context.Context, stream grpcStr
 		return err
 	}
 
-	log.Debugf("%s Incoming connection from %s #%d", s.name, peerInfo.Addr, connectionCount)
+	log.Debugf("%s Incoming connection from %s", s.name, peerInfo.Addr)
 
 	<-connection.stopChan
 	return nil
+}
+
+// admitInbound takes an inbound slot for a stream from address, or refuses it with ResourceExhausted.
+// A configured requested peer takes its own slot if that is free; every other stream counts against
+// maxInboundConnections. The returned function frees the slot.
+func (s *gRPCServer) admitInbound(address *net.TCPAddr) (release func(), err error) {
+	s.inboundConnectionCountLock.Lock()
+	if s.refuseAllInbound {
+		s.inboundConnectionCountLock.Unlock()
+		return nil, status.Errorf(codes.ResourceExhausted, "%s accepts no inbound connections", s.name)
+	}
+	key := net.JoinHostPort(address.IP.String(), strconv.Itoa(address.Port))
+	if taken, ok := s.requestedPeerSlots[key]; ok && !taken {
+		s.requestedPeerSlots[key] = true
+		s.inboundConnectionCountLock.Unlock()
+		return func() {
+			s.inboundConnectionCountLock.Lock()
+			defer s.inboundConnectionCountLock.Unlock()
+			s.requestedPeerSlots[key] = false
+		}, nil
+	}
+	s.inboundConnectionCountLock.Unlock()
+
+	if _, err := s.incrementInboundConnectionCountAndLimitIfRequired(); err != nil {
+		return nil, err
+	}
+	return s.decrementInboundConnectionCount, nil
 }
 
 func (s *gRPCServer) incrementInboundConnectionCountAndLimitIfRequired() (int, error) {
