@@ -2660,6 +2660,7 @@ func (pm *pruningManager) applyPruningPointUTXOSetDiff(stagingArea *model.Stagin
 func (pm *pruningManager) finishPruningPointUTXOSetUpdate(stagingArea *model.StagingArea,
 	pruningPoint *externalapi.DomainHash,
 ) error {
+	start := time.Now()
 	var newPruningTime *time.Time
 	if pm.shouldDeferDeletion(stagingArea, pruningPoint) {
 		log.Infof("Pruning point advanced, but block deletion deferred (data retention/interval not met)")
@@ -2690,6 +2691,7 @@ func (pm *pruningManager) finishPruningPointUTXOSetUpdate(stagingArea *model.Sta
 	if err != nil {
 		return err
 	}
+	log.Infof("Pruning point %s: update finished in %s (past-block deletion and commit)", pruningPoint, time.Since(start))
 
 	if newPruningTime != nil {
 		pm.lastPruningTime = *newPruningTime
