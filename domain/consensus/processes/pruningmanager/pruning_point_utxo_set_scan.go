@@ -112,7 +112,7 @@ func (pm *pruningManager) ScanPruningPointUTXOSet(ctx context.Context, lock sync
 		return pm.pruningPointUTXOSetMismatchError(stagingArea, pruningPoint, header, utxoSetHash, stats)
 	}
 	log.Infof("Pruning point %s: the UTXO set this node serves matches the chain's commitment for it "+
-		"(checked in %s over %s)", pruningPoint, elapsed, stats)
+		"(checked in %s over %s; hash %s)", pruningPoint, elapsed, stats, utxoSetHash)
 
 	return pm.finishPruningPointUTXOSetUpdate(stagingArea, pruningPoint)
 }
