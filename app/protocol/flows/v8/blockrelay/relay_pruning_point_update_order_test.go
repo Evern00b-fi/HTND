@@ -199,6 +199,7 @@ func TestRelayFlowAnnouncesBeforeTheDeferredPruningPointUpdate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("domain.New: %+v", err)
 		}
+		defer domainInstance.Consensus().Close()
 		cfg := config.DefaultConfig()
 		cfg.ActiveNetParams = &consensusConfig.Params
 		cfg.AllowSubmitBlockWhenNotSynced = true
@@ -285,8 +286,12 @@ func TestRelayFlowAnnouncesBeforeTheDeferredPruningPointUpdate(t *testing.T) {
 			t.Errorf("the pruning point UTXO set update ran before the relay flow announced the block that moved " +
 				"the pruning point")
 		}
-		if order.pending() {
-			t.Errorf("the relay flow did not run the pending pruning point UTXO set update after announcing the block")
+		// The update's last step, the check of the set against its commitment, runs in the background.
+		for deadline := time.Now().Add(30 * time.Second); order.pending(); time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("the relay flow did not run the pending pruning point UTXO set update after announcing " +
+					"the block")
+			}
 		}
 	})
 }
