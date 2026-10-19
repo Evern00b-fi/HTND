@@ -46,65 +46,68 @@ func applyDefaultMemoryLimit(lookupEnv func(string) (string, bool), setMemoryLim
 	var targetGOGC int
 
 	gogc, hasGOGC := lookupEnv("GOGC")
+	gomemlimit, hasMemoryLimit := lookupEnv("GOMEMLIMIT")
 
-	if value, isSet := lookupEnv("GOMEMLIMIT"); !isSet && value != "" {
-		v, err := mem.VirtualMemory()
-		if err != nil {
-			// Guess....
-			targetLimit = 8 * GiB
-			targetGOGC = 100
-			debug.SetMemoryLimit(targetLimit)
-			if !(hasGOGC && gogc != "") {
-				debug.SetGCPercent(targetGOGC)
-			}
+	if hasMemoryLimit && gomemlimit != "" {
+		return
+	}
 
-			earlyInfof("UNABLE TO DETERMINE SYSTEM MEMORY, USING DEFAULT MEMORY LIMITS")
-			earlyInfof(" -> GOMEMLIMIT set to: %d MB ", targetLimit/(1024*1024))
-			if !(hasGOGC && gogc != "") {
-				earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
-			}
-			return
-		}
-
-		availableMemory := v.Available
-		switch {
-		case availableMemory < 4*GiB:
-			// If less than 4GiB, claim 90% and set GOGC to 50
-			targetLimit = int64(float64(availableMemory) * 0.90)
-			targetGOGC = 50
-
-		case availableMemory >= 4*GiB && availableMemory < 8*GiB:
-			targetLimit = 8 * GiB
-			if targetLimit > int64(float64(availableMemory)*0.85) {
-				targetLimit = int64(float64(availableMemory) * 0.85)
-			}
-			targetGOGC = 80
-
-		case availableMemory >= 8*GiB && availableMemory < 16*GiB:
-			targetLimit = 8 * GiB
-			targetGOGC = 100
-
-		case availableMemory >= 16*GiB && availableMemory < 32*GiB:
-			targetLimit = 16 * GiB
-			if targetLimit > int64(float64(availableMemory)*0.85) {
-				targetLimit = int64(float64(availableMemory) * 0.85)
-			}
-			targetGOGC = 100
-
-		default: // 32GiB or more
-			// If 32GiB or more available, set limit to 16GiB and GOGC to 100
-			targetLimit = 16 * GiB
-			targetGOGC = 100
-		}
-
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		// Guess....
+		targetLimit = 8 * GiB
+		targetGOGC = 100
 		debug.SetMemoryLimit(targetLimit)
-		debug.SetGCPercent(targetGOGC)
+		if !(hasGOGC && gogc != "") {
+			debug.SetGCPercent(targetGOGC)
+		}
 
-		earlyInfof("Automated golang memory management based on system:")
-		earlyInfof(" -> GOMEMLIMIT set to: %d MB (System Available: %d MB of %d MB)", targetLimit/(1024*1024), availableMemory/(1024*1024), v.Total/(1024*1024))
+		earlyInfof("UNABLE TO DETERMINE SYSTEM MEMORY, USING DEFAULT MEMORY LIMITS")
+		earlyInfof(" -> GOMEMLIMIT set to: %d MB ", targetLimit/(1024*1024))
 		if !(hasGOGC && gogc != "") {
 			earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
 		}
+		return
+	}
+
+	availableMemory := v.Available
+	switch {
+	case availableMemory < 4*GiB:
+		// If less than 4GiB, claim 90% and set GOGC to 50
+		targetLimit = int64(float64(availableMemory) * 0.90)
+		targetGOGC = 50
+
+	case availableMemory >= 4*GiB && availableMemory < 8*GiB:
+		targetLimit = 8 * GiB
+		if targetLimit > int64(float64(availableMemory)*0.85) {
+			targetLimit = int64(float64(availableMemory) * 0.85)
+		}
+		targetGOGC = 60
+
+	case availableMemory >= 8*GiB && availableMemory < 16*GiB:
+		targetLimit = 8 * GiB
+		targetGOGC = 100
+
+	case availableMemory >= 16*GiB && availableMemory < 32*GiB:
+		targetLimit = 16 * GiB
+		if targetLimit > int64(float64(availableMemory)*0.85) {
+			targetLimit = int64(float64(availableMemory) * 0.85)
+		}
+		targetGOGC = 100
+
+	default: // 32GiB or more
+		// If 32GiB or more available, set limit to 16GiB and GOGC to 100
+		targetLimit = 16 * GiB
+		targetGOGC = 100
+	}
+
+	debug.SetMemoryLimit(targetLimit)
+	debug.SetGCPercent(targetGOGC)
+
+	earlyInfof("Automated golang memory management based on system:")
+	earlyInfof(" -> GOMEMLIMIT set to: %d MB (System Available: %d MB of %d MB)", targetLimit/(1024*1024), availableMemory/(1024*1024), v.Total/(1024*1024))
+	if !(hasGOGC && gogc != "") {
+		earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
 	}
 }
 
