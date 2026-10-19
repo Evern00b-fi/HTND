@@ -39,76 +39,140 @@ func earlyInfof(format string, args ...any) {
 // treats an empty GOMEMLIMIT as unset, we will make some more sensible defaults if the users does not specify
 const defaultMemoryLimit = 8_000_000_000 // Needed for tests
 
-func applyDefaultMemoryLimit(lookupEnv func(string) (string, bool), setMemoryLimit func(int64) int64) {
-	const GiB = 1024 * 1024 * 1024
+func applyDefaultMemoryLimit(
+	lookupEnv func(string) (string, bool),
+	setMemoryLimit func(int64) int64,
+) {
+	const (
+		GiB = 1024 * 1024 * 1024
+		MiB = 1024 * 1024
+
+		pebbleDefaultCacheMB = 2048
+		pebbleMinCacheMB     = 64
+		pebbleMaxCacheMB     = pebbleDefaultCacheMB
+
+		pebbleDefaultAtRAM = 8 * GiB
+	)
+
+	gogc, hasGOGC := lookupEnv("GOGC")
+	gomemlimit, hasMemoryLimit := lookupEnv("GOMEMLIMIT")
+	pebbleCache, hasPebbleCache := lookupEnv("HTND_PEBBLE_CACHE_MB")
+
+	explicitMemoryLimit := hasMemoryLimit && gomemlimit != ""
+	explicitPebbleCache := hasPebbleCache && pebbleCache != ""
+
+	v, err := mem.VirtualMemory()
+	if err != nil {
+		if !explicitMemoryLimit {
+			setMemoryLimit(8 * GiB)
+
+			if !(hasGOGC && gogc != "") {
+				debug.SetGCPercent(100)
+			}
+		}
+
+		earlyInfof(
+			"UNABLE TO DETERMINE SYSTEM MEMORY; USING DEFAULT MEMORY LIMITS",
+		)
+		return
+	}
+
+	// Scale the off-heap Pebble cache from total RAM, not currently
+	// available RAM. This avoids the cache size varying because of
+	// unrelated processes or filesystem cache pressure.
+	//
+	// At 8 GiB RAM and above, retain the normal 2 GiB default.
+	// Below 8 GiB, use approximately 25% of total RAM.
+	if !explicitPebbleCache {
+		var pebbleCacheMB int
+
+		if v.Total >= pebbleDefaultAtRAM {
+			pebbleCacheMB = pebbleDefaultCacheMB
+		} else {
+			pebbleCacheMB = int(v.Total / (4 * MiB))
+			if pebbleCacheMB < pebbleMinCacheMB {
+				pebbleCacheMB = pebbleMinCacheMB
+			}
+			if pebbleCacheMB > pebbleMaxCacheMB {
+				pebbleCacheMB = pebbleMaxCacheMB
+			}
+		}
+
+		if err := os.Setenv(
+			"HTND_PEBBLE_CACHE_MB",
+			strconv.Itoa(pebbleCacheMB),
+		); err != nil {
+			earlyInfof(
+				"WARNING: unable to set HTND_PEBBLE_CACHE_MB: %v",
+				err,
+			)
+		} else {
+			earlyInfof(
+				" -> HTND_PEBBLE_CACHE_MB set to: %d MB",
+				pebbleCacheMB,
+			)
+		}
+	}
+
+	availableMemory := v.Available
 
 	var targetLimit int64
 	var targetGOGC int
 
-	gogc, hasGOGC := lookupEnv("GOGC")
-	gomemlimit, hasMemoryLimit := lookupEnv("GOMEMLIMIT")
-
-	if hasMemoryLimit && gomemlimit != "" {
-		return
-	}
-
-	v, err := mem.VirtualMemory()
-	if err != nil {
-		// Guess....
-		targetLimit = 8 * GiB
-		targetGOGC = 100
-		debug.SetMemoryLimit(targetLimit)
-		if !(hasGOGC && gogc != "") {
-			debug.SetGCPercent(targetGOGC)
-		}
-
-		earlyInfof("UNABLE TO DETERMINE SYSTEM MEMORY, USING DEFAULT MEMORY LIMITS")
-		earlyInfof(" -> GOMEMLIMIT set to: %d MB ", targetLimit/(1024*1024))
-		if !(hasGOGC && gogc != "") {
-			earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
-		}
-		return
-	}
-
-	availableMemory := v.Available
 	switch {
 	case availableMemory < 4*GiB:
-		// If less than 4GiB, claim 90% and set GOGC to 50
-		targetLimit = int64(float64(availableMemory) * 0.90)
+		targetLimit = int64(float64(availableMemory) * 0.75)
 		targetGOGC = 50
 
-	case availableMemory >= 4*GiB && availableMemory < 8*GiB:
+	case availableMemory < 8*GiB:
 		targetLimit = 8 * GiB
 		if targetLimit > int64(float64(availableMemory)*0.85) {
 			targetLimit = int64(float64(availableMemory) * 0.85)
 		}
 		targetGOGC = 60
 
-	case availableMemory >= 8*GiB && availableMemory < 16*GiB:
+	case availableMemory < 16*GiB:
 		targetLimit = 8 * GiB
 		targetGOGC = 100
 
-	case availableMemory >= 16*GiB && availableMemory < 32*GiB:
+	case availableMemory < 32*GiB:
 		targetLimit = 16 * GiB
 		if targetLimit > int64(float64(availableMemory)*0.85) {
 			targetLimit = int64(float64(availableMemory) * 0.85)
 		}
 		targetGOGC = 100
 
-	default: // 32GiB or more
-		// If 32GiB or more available, set limit to 16GiB and GOGC to 100
+	default:
 		targetLimit = 16 * GiB
 		targetGOGC = 100
 	}
 
-	debug.SetMemoryLimit(targetLimit)
-	debug.SetGCPercent(targetGOGC)
+	if !explicitMemoryLimit {
+		setMemoryLimit(targetLimit)
+	}
 
-	earlyInfof("Automated golang memory management based on system:")
-	earlyInfof(" -> GOMEMLIMIT set to: %d MB (System Available: %d MB of %d MB)", targetLimit/(1024*1024), availableMemory/(1024*1024), v.Total/(1024*1024))
+	if !(hasGOGC && gogc != "") {
+		debug.SetGCPercent(targetGOGC)
+	}
+
+	earlyInfof("Automated memory management based on system:")
+
+	if !explicitMemoryLimit {
+		earlyInfof(
+			" -> GOMEMLIMIT set to: %d MB",
+			targetLimit/MiB,
+		)
+	}
+
 	if !(hasGOGC && gogc != "") {
 		earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
 	}
+
+	earlyInfof(
+		" -> System Available: %d MB of %d MB",
+		availableMemory/MiB,
+		v.Total/MiB,
+	)
 }
 
 func getEnvStr(key string, defaultVal string) string {
