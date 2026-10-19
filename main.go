@@ -77,6 +77,8 @@ func applyDefaultMemoryLimit(
 		return
 	}
 
+	earlyInfof("Automated memory management based on system:")
+
 	// Scale the off-heap Pebble cache from total RAM, not currently
 	// available RAM. This avoids the cache size varying because of
 	// unrelated processes or filesystem cache pressure.
@@ -155,7 +157,6 @@ func applyDefaultMemoryLimit(
 		debug.SetGCPercent(targetGOGC)
 	}
 
-	earlyInfof("Automated memory management based on system:")
 
 	if !explicitMemoryLimit {
 		earlyInfof(
