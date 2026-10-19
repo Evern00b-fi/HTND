@@ -37,24 +37,32 @@ func earlyInfof(format string, args ...any) {
 // GOMEMLIMIT, in every form it accepts ("4GiB", "off", plain bytes); this used to re-parse it as a plain integer and
 // replace anything else with the default, so GOMEMLIMIT=4GiB on a small machine ran with an 8 GB limit. The runtime
 // treats an empty GOMEMLIMIT as unset, we will make some more sensible defaults if the users does not specify
+const defaultMemoryLimit = 8_000_000_000 // Needed for tests
+
 func applyDefaultMemoryLimit(lookupEnv func(string) (string, bool), setMemoryLimit func(int64) int64) {
 	const GiB = 1024 * 1024 * 1024
 
 	var targetLimit int64
 	var targetGOGC int
 
-	if _, isSet := lookupEnv("GOMEMLIMIT"); !isSet {
+	gogc, hasGOGC := lookupEnv("GOGC")
+
+	if value, isSet := lookupEnv("GOMEMLIMIT"); !isSet && value != "" {
 		v, err := mem.VirtualMemory()
 		if err != nil {
 			// Guess....
 			targetLimit = 8 * GiB
 			targetGOGC = 100
 			debug.SetMemoryLimit(targetLimit)
-			debug.SetGCPercent(targetGOGC)
+			if !(hasGOGC && gogc != "") {
+				debug.SetGCPercent(targetGOGC)
+			}
 
 			earlyInfof("UNABLE TO DETERMINE SYSTEM MEMORY, USING DEFAULT MEMORY LIMITS")
 			earlyInfof(" -> GOMEMLIMIT set to: %d MB ", targetLimit/(1024*1024))
-			earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
+			if !(hasGOGC && gogc != "") {
+				earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
+			}
 			return
 		}
 
@@ -94,7 +102,9 @@ func applyDefaultMemoryLimit(lookupEnv func(string) (string, bool), setMemoryLim
 
 		earlyInfof("Automated golang memory management based on system:")
 		earlyInfof(" -> GOMEMLIMIT set to: %d MB (System Available: %d MB of %d MB)", targetLimit/(1024*1024), availableMemory/(1024*1024), v.Total/(1024*1024))
-		earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
+		if !(hasGOGC && gogc != "") {
+			earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
+		}
 	}
 }
 
