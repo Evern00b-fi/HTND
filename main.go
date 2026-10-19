@@ -157,7 +157,6 @@ func applyDefaultMemoryLimit(
 		debug.SetGCPercent(targetGOGC)
 	}
 
-
 	if !explicitMemoryLimit {
 		earlyInfof(
 			" -> GOMEMLIMIT set to: %d MB",
