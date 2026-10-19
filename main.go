@@ -21,20 +21,81 @@ import (
 	"github.com/HoosatNetwork/HTND/v2/infrastructure/config"
 	"github.com/HoosatNetwork/HTND/v2/infrastructure/rlimit"
 	"github.com/HoosatNetwork/HTND/v2/version"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
-// defaultMemoryLimit is the soft memory limit htnd uses when GOMEMLIMIT is not set.
-const defaultMemoryLimit = 8_000_000_000
+func earlyInfof(format string, args ...any) {
+	fmt.Fprintf(
+		os.Stdout,
+		"%s [INF] HSATD: %s\n",
+		time.Now().Format("2006-01-02 15:04:05.000"),
+		fmt.Sprintf(format, args...),
+	)
+}
 
 // applyDefaultMemoryLimit sets defaultMemoryLimit unless GOMEMLIMIT is set. The Go runtime has already applied a set
 // GOMEMLIMIT, in every form it accepts ("4GiB", "off", plain bytes); this used to re-parse it as a plain integer and
 // replace anything else with the default, so GOMEMLIMIT=4GiB on a small machine ran with an 8 GB limit. The runtime
-// treats an empty GOMEMLIMIT as unset, so htnd does too.
+// treats an empty GOMEMLIMIT as unset, we will make some more sensible defaults if the users does not specify
 func applyDefaultMemoryLimit(lookupEnv func(string) (string, bool), setMemoryLimit func(int64) int64) {
-	if value, _ := lookupEnv("GOMEMLIMIT"); value != "" {
-		return
+	const GiB = 1024 * 1024 * 1024
+
+	var targetLimit int64
+	var targetGOGC int
+
+	if _, isSet := lookupEnv("GOMEMLIMIT"); !isSet {
+		v, err := mem.VirtualMemory()
+		if err != nil {
+			// Guess....
+			targetLimit = 8 * GiB
+			targetGOGC = 100
+			debug.SetMemoryLimit(targetLimit)
+			debug.SetGCPercent(targetGOGC)
+
+			earlyInfof("UNABLE TO DETERMINE SYSTEM MEMORY, USING DEFAULT MEMORY LIMITS")
+			earlyInfof(" -> GOMEMLIMIT set to: %d MB ", targetLimit/(1024*1024))
+			earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
+			return
+		}
+
+		availableMemory := v.Available
+		switch {
+		case availableMemory < 4*GiB:
+			// If less than 4GiB, claim 90% and set GOGC to 50
+			targetLimit = int64(float64(availableMemory) * 0.90)
+			targetGOGC = 50
+
+		case availableMemory >= 4*GiB && availableMemory < 8*GiB:
+			targetLimit = 8 * GiB
+			if targetLimit > int64(float64(availableMemory)*0.85) {
+				targetLimit = int64(float64(availableMemory) * 0.85)
+			}
+			targetGOGC = 80
+
+		case availableMemory >= 8*GiB && availableMemory < 16*GiB:
+			targetLimit = 8 * GiB
+			targetGOGC = 100
+
+		case availableMemory >= 16*GiB && availableMemory < 32*GiB:
+			targetLimit = 16 * GiB
+			if targetLimit > int64(float64(availableMemory)*0.85) {
+				targetLimit = int64(float64(availableMemory) * 0.85)
+			}
+			targetGOGC = 100
+
+		default: // 32GiB or more
+			// If 32GiB or more available, set limit to 16GiB and GOGC to 100
+			targetLimit = 16 * GiB
+			targetGOGC = 100
+		}
+
+		debug.SetMemoryLimit(targetLimit)
+		debug.SetGCPercent(targetGOGC)
+
+		earlyInfof("Automated golang memory management based on system:")
+		earlyInfof(" -> GOMEMLIMIT set to: %d MB (System Available: %d MB of %d MB)", targetLimit/(1024*1024), availableMemory/(1024*1024), v.Total/(1024*1024))
+		earlyInfof(" -> GOGC set to: %d%%", targetGOGC)
 	}
-	setMemoryLimit(defaultMemoryLimit)
 }
 
 func getEnvStr(key string, defaultVal string) string {
