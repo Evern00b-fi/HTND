@@ -88,9 +88,9 @@ func TestComponentConstructionFailureWaitsForPruningPointScan(t *testing.T) {
 		default:
 			t.Error("construction returned before closing the scan cursor")
 		}
-		if !returned && !n.updating() {
-			t.Error("failed construction finished the pending update instead of cancelling it")
-		}
+		// The failure notification and the wait above do not order cancellation before Release. A check that
+		// finishes first may commit; construction must join it either way. Cancellation while held is covered by
+		// TestStopDuringThePruningPointUTXOSetCheck.
 		// Also wait on the unfixed implementation, so teardown does not close
 		// the database beneath the cursor after this regression fails.
 		select {

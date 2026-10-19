@@ -333,13 +333,13 @@ func TestStopDuringThePruningPointUTXOSetCheck(t *testing.T) {
 		pruningPoint := n.insertUntilThePruningPointMoves(n.insertAndUpdate, nil)
 		n.waitForHold(hold)
 
+		// Release only after Close cancels the check; otherwise the small set can finish before Close runs.
+		consensus.AfterPruningPointUTXOSetScanStopForTest(n.node, hold.Release)
 		closed := make(chan struct{})
 		go func() {
 			n.node.Close()
 			close(closed)
 		}()
-		// The held cursor sees the stop at its next step.
-		hold.Release()
 		select {
 		case <-closed:
 		case <-time.After(scanTestTimeout):
@@ -354,6 +354,9 @@ func TestStopDuringThePruningPointUTXOSetCheck(t *testing.T) {
 			t.Fatalf("the stopped check finished the update")
 		}
 
+		// Keep the restarted check pending until the refusal below is observed.
+		restartHold := n.db.armHold()
+		defer restartHold.Release()
 		started := n.db.started
 		node, _, err := consensus.NewFactory().NewConsensus(n.nodeConfig, n.db, n.dbPrefix, nil)
 		if err != nil {
@@ -363,7 +366,9 @@ func TestStopDuringThePruningPointUTXOSetCheck(t *testing.T) {
 		if n.db.started != started+1 {
 			t.Fatalf("the restart ran %d pruning point UTXO set updates, want 1", n.db.started-started)
 		}
+		n.waitForHold(restartHold)
 		n.requireRefused(pruningPoint)
+		restartHold.Release()
 		n.waitUntilUpdated()
 		n.requireServedAndVerified(pruningPoint)
 		if !n.blockDeleted(firstPruningPoint) {
