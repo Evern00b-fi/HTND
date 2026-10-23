@@ -84,14 +84,14 @@ func applyDefaultMemoryLimit(
 	// unrelated processes or filesystem cache pressure.
 	//
 	// At 8 GiB RAM and above, retain the normal 2 GiB default.
-	// Below 8 GiB, use approximately 25% of total RAM.
+	// Below 8 GiB, use approximately 12.5% of total RAM.
 	if !explicitPebbleCache {
 		var pebbleCacheMB int
 
 		if v.Total >= pebbleDefaultAtRAM {
 			pebbleCacheMB = pebbleDefaultCacheMB
 		} else {
-			pebbleCacheMB = int(v.Total / (4 * MiB))
+			pebbleCacheMB = int(v.Total / (8 * MiB))
 			if pebbleCacheMB < pebbleMinCacheMB {
 				pebbleCacheMB = pebbleMinCacheMB
 			}
