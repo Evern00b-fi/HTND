@@ -1249,7 +1249,7 @@ func (s *consensus) ValidateAndInsertImportedPruningPoint(newPruningPoint *exter
 	// Active local journals and imported-state replacement cannot share a destination.
 	// Staging consensus (without a materialized position) retains the synchronous importer.
 	if pruningmanager.JournalActive(s.pruningManager) {
-		return errors.New("PP42 active instance refuses import; use staging consensus")
+		return errors.New("pruning journal: active instance refuses import; use staging consensus")
 	}
 
 	if err := s.blockProcessor.ValidateAndInsertImportedPruningPoint(newPruningPoint); err != nil {
@@ -1451,7 +1451,7 @@ func (s *consensus) ImportPruningPoints(pruningPoints []externalapi.BlockHeader)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if pruningmanager.JournalActive(s.pruningManager) {
-		return errors.New("PP42 active instance refuses pruning-list import; use staging consensus")
+		return errors.New("pruning journal: active instance refuses pruning-list import; use staging consensus")
 	}
 
 	stagingArea := model.NewStagingArea()

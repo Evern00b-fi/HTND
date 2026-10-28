@@ -34,7 +34,7 @@ func ConfigureJournalWorker(manager model.PruningManager, prefix model.DBBucket,
 		return nil
 	}
 	if pm.requestUTXOSetScan == nil {
-		return fmt.Errorf("PP42 requires deferred pruning updates")
+		return fmt.Errorf("pruning journal: requires deferred pruning updates")
 	}
 	opener, ok := pm.databaseContext.(interface {
 		NewSnapshot() (*database.ReadSnapshot, error)
@@ -44,7 +44,7 @@ func ConfigureJournalWorker(manager model.PruningManager, prefix model.DBBucket,
 			pm.journalRequested = false
 			return nil
 		}
-		return fmt.Errorf("PP42 snapshot backend unavailable with durable work")
+		return fmt.Errorf("pruning journal: snapshot backend unavailable with durable work")
 	}
 	probe, e := opener.NewSnapshot()
 	if errors.Is(e, database.ErrSnapshotUnsupported) && state == nil {
@@ -61,7 +61,7 @@ func ConfigureJournalWorker(manager model.PruningManager, prefix model.DBBucket,
 	// Snapshot visibility alone does not establish durable journal admission.
 	admission, ok := pm.databaseContext.(interface{ CheckPruningJournalAdmission() error })
 	if !ok {
-		return fmt.Errorf("PP42 durable journal admission unavailable")
+		return fmt.Errorf("pruning journal: durable journal admission unavailable")
 	}
 	if err := admission.CheckPruningJournalAdmission(); err != nil {
 		return err
@@ -408,14 +408,14 @@ func (pm *pruningManager) captureJournalJob() (s *pruningstore.JournalState, sna
 		return nil, nil, nil, false, e
 	}
 	if s == nil {
-		return nil, nil, nil, false, fmt.Errorf("PP42 missing materialized position")
+		return nil, nil, nil, false, fmt.Errorf("pruning journal: missing materialized position")
 	}
 	index, e := pm.pruningStore.CurrentPruningPointIndex(pm.databaseContext, model.NewStagingArea())
 	if e != nil {
 		return nil, nil, nil, false, e
 	}
 	if s.TargetIndex > index {
-		return nil, nil, nil, false, fmt.Errorf("PP42 selected position regressed")
+		return nil, nil, nil, false, fmt.Errorf("pruning journal: selected position regressed")
 	}
 	targetIndex, baseIndex, baseName := s.TargetIndex, s.BaseIndex, s.Base
 	begin = s.Phase == "complete" && s.TargetIndex < index
@@ -427,7 +427,7 @@ func (pm *pruningManager) captureJournalJob() (s *pruningstore.JournalState, sna
 		return nil, nil, nil, false, e
 	}
 	if !begin && target.String() != s.Target {
-		return nil, nil, nil, false, fmt.Errorf("PP42 target identity changed")
+		return nil, nil, nil, false, fmt.Errorf("pruning journal: target identity changed")
 	}
 	if begin || s.Phase != "complete" {
 		base, err := pm.pruningStore.PruningPointByIndex(pm.databaseContext, model.NewStagingArea(), baseIndex)
@@ -435,7 +435,7 @@ func (pm *pruningManager) captureJournalJob() (s *pruningstore.JournalState, sna
 			return nil, nil, nil, false, err
 		}
 		if targetIndex != baseIndex+1 || base.String() != baseName {
-			return nil, nil, nil, false, fmt.Errorf("PP42 base identity changed")
+			return nil, nil, nil, false, fmt.Errorf("pruning journal: base identity changed")
 		}
 	}
 	if s.Phase == "complete" && !begin {

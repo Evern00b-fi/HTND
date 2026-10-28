@@ -2109,7 +2109,7 @@ func (pm *pruningManager) repairPruningPointUTXOSet(stagingArea *model.StagingAr
 	// A repair cannot bypass journal ownership, even during exclusive startup: a
 	// process kill during its legacy per-key writes would have no redo manifest.
 	if pm.journal != nil {
-		log.Errorf("[PP42] diagnostic repair refused while journal owns the pruning set")
+		log.Errorf("[pruning journal] diagnostic repair refused while journal owns the pruning set")
 		return
 	}
 	correctIterator, err := pm.consensusStateManager.RestorePastUTXOSetIterator(stagingArea, pruningPoint)

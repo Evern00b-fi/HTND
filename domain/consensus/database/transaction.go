@@ -79,7 +79,7 @@ func newDBTransaction(transaction database.Transaction) model.DBTransaction {
 func (d *dbTransaction) CommitSync() error {
 	tx, ok := d.transaction.(interface{ CommitSync() error })
 	if !ok {
-		return fmt.Errorf("PP42 backend cannot sync a transaction")
+		return fmt.Errorf("pruning journal: backend cannot sync a transaction")
 	}
 	return tx.CommitSync()
 }

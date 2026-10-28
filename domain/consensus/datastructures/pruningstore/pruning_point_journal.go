@@ -53,7 +53,7 @@ type Journal struct {
 
 // ErrJournalDiskReserve is returned, before the write it guards, when free space is
 // below the declared policy. The job stays resumable; nothing partial is published.
-var ErrJournalDiskReserve = errors.New("PP42 journal disk reserve not met")
+var ErrJournalDiskReserve = errors.New("pruning journal: journal disk reserve not met")
 
 // JournalDiskPolicy is the declared free-space requirement checked before every
 // journal write: Floor + Margin x (estimated job bytes still to be written).
@@ -137,7 +137,7 @@ func (j *Journal) Load() (*JournalState, error) {
 	if s.Version != 1 || (s.Phase != "preparing" && s.Phase != "ready" && s.Phase != "complete") || s.Applied > s.Count || s.TargetIndex < s.BaseIndex ||
 		(s.Phase == "complete" && s.Applied != s.Count) ||
 		(s.Phase == "ready" && len(s.Checksum) != sha256.Size) {
-		return nil, fmt.Errorf("invalid PP42 manifest")
+		return nil, fmt.Errorf("invalid pruning journal manifest")
 	}
 	return s, nil
 }
@@ -172,7 +172,7 @@ func (j *Journal) Initialize(index uint64, target *externalapi.DomainHash) error
 // only journal records and derives again; no live key has been written in preparing.
 func (j *Journal) Begin(base *JournalState, index uint64, target *externalapi.DomainHash) (*JournalState, error) {
 	if base.Phase != "complete" || index != base.TargetIndex+1 {
-		return nil, fmt.Errorf("PP42 non-contiguous base")
+		return nil, fmt.Errorf("pruning journal: non-contiguous base")
 	}
 	s := &JournalState{Version: 1, Phase: "preparing", BaseIndex: base.TargetIndex, Base: base.Target, TargetIndex: index, Target: target.String(), Bytes: base.Bytes}
 	if e := j.Save(s); e != nil {
@@ -190,7 +190,7 @@ func (j *Journal) Begin(base *JournalState, index uint64, target *externalapi.Do
 func (j *Journal) AdoptSynchronousMove(base *JournalState, target *externalapi.DomainHash, method string,
 	added, removed int) (*JournalState, error) {
 	if base.Phase != "complete" {
-		return nil, fmt.Errorf("PP42 non-contiguous base")
+		return nil, fmt.Errorf("pruning journal: non-contiguous base")
 	}
 	s := &JournalState{Version: 1, Phase: "complete", BaseIndex: base.TargetIndex, Base: base.Target,
 		TargetIndex: base.TargetIndex + 1, Target: target.String(), Method: method, Added: added, Removed: removed,
@@ -282,7 +282,7 @@ func (j *Journal) Clear(ctx context.Context) error {
 // second in-memory array. Every record is an absolute put/delete and is idempotent.
 func (j *Journal) Build(ctx context.Context, s *JournalState, diff externalapi.UTXODiff, method string) error {
 	if s.Phase != "preparing" {
-		return fmt.Errorf("PP42 build outside preparing")
+		return fmt.Errorf("pruning journal: build outside preparing")
 	}
 	if e := j.Clear(ctx); e != nil {
 		return e
@@ -320,7 +320,7 @@ func (j *Journal) Build(ctx context.Context, s *JournalState, diff externalapi.U
 				v = append([]byte{1}, data...)
 			}
 			if len(k)+len(v) > JournalBatchBytes {
-				e = fmt.Errorf("PP42 oversized record")
+				e = fmt.Errorf("pruning journal: oversized record")
 				break
 			}
 			if e = tx.Put(j.records.Key(k), v); e != nil {
@@ -408,7 +408,7 @@ func (j *Journal) digest(ctx context.Context) (uint64, []byte, uint64, error) {
 			break
 		}
 		if len(v) == 0 || v[0] > 1 || (v[0] == 0 && len(v) != 1) {
-			e = fmt.Errorf("invalid PP42 record")
+			e = fmt.Errorf("invalid pruning journal record")
 			break
 		}
 		digestRecord(h, k.Suffix(), v)
@@ -430,14 +430,14 @@ func (j *Journal) digest(ctx context.Context) (uint64, []byte, uint64, error) {
 // failed/uncertain commit. Retrying reloads the manifest instead of re-deriving a diff.
 func (j *Journal) Apply(ctx context.Context, s *JournalState) error {
 	if s.Phase != "ready" {
-		return fmt.Errorf("PP42 apply outside ready")
+		return fmt.Errorf("pruning journal: apply outside ready")
 	}
 	n, sum, _, e := j.digest(ctx)
 	if e != nil {
 		return e
 	}
 	if n != s.Count || !bytes.Equal(sum, s.Checksum) {
-		return fmt.Errorf("PP42 journal checksum/count mismatch")
+		return fmt.Errorf("pruning journal: journal checksum/count mismatch")
 	}
 	for s.Phase == "ready" {
 		if e := j.CheckSealedReserve(s.Remaining()); e != nil {
@@ -501,7 +501,7 @@ func (j *Journal) Apply(ctx context.Context, s *JournalState) error {
 		}
 		if !ok {
 			if next.Applied != next.Count {
-				e = fmt.Errorf("PP42 incomplete cursor")
+				e = fmt.Errorf("pruning journal: incomplete cursor")
 			}
 			next.Phase = "complete"
 		}
@@ -585,7 +585,7 @@ func (j *Journal) Available() (uint64, error) {
 	if c, ok := j.DB.(interface{ AvailableDiskBytes() (uint64, error) }); ok {
 		return c.AvailableDiskBytes()
 	}
-	return 0, fmt.Errorf("PP42 backend has no disk space query")
+	return 0, fmt.Errorf("pruning journal: backend has no disk space query")
 }
 
 // RemoveAfterFinish requires exclusive ownership after the background owner is joined.
@@ -601,7 +601,7 @@ func (j *Journal) RemoveAfterFinish(ctx context.Context) error {
 		return e
 	}
 	if pending || s == nil || s.Phase != "complete" {
-		return fmt.Errorf("PP42 downgrade requires verified finished set")
+		return fmt.Errorf("pruning journal: downgrade requires verified finished set")
 	}
 	if e = j.Clear(ctx); e != nil {
 		return e
@@ -623,7 +623,7 @@ func (j *Journal) RemoveAfterFinish(ctx context.Context) error {
 func journalSync(tx model.DBTransaction) error {
 	syncer, ok := tx.(interface{ CommitSync() error })
 	if !ok {
-		return fmt.Errorf("PP42 backend cannot sync")
+		return fmt.Errorf("pruning journal: backend cannot sync")
 	}
 	return syncer.CommitSync()
 }

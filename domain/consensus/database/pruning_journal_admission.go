@@ -6,7 +6,7 @@ import "github.com/pkg/errors"
 func (d *dbManager) CheckPruningJournalAdmission() error {
 	checker, ok := d.db.(interface{ CheckPruningJournalAdmission() error })
 	if !ok {
-		return errors.New("PP42 backend has no durable journal admission")
+		return errors.New("pruning journal: backend has no durable journal admission")
 	}
 	return checker.CheckPruningJournalAdmission()
 }
@@ -15,7 +15,7 @@ func (d *dbManager) CheckPruningJournalAdmission() error {
 func (d *dbManager) AvailableDiskBytes() (uint64, error) {
 	query, ok := d.db.(interface{ AvailableDiskBytes() (uint64, error) })
 	if !ok {
-		return 0, errors.New("PP42 backend has no disk space query")
+		return 0, errors.New("pruning journal: backend has no disk space query")
 	}
 	return query.AvailableDiskBytes()
 }

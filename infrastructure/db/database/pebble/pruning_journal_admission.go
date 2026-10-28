@@ -9,7 +9,7 @@ import (
 // journal initialization can write; the read snapshot itself does not require WAL.
 func (db *DB) CheckPruningJournalAdmission() error {
 	if db.walDisabled {
-		return errors.New("PP42 requires WAL enabled")
+		return errors.New("pruning journal: requires WAL enabled")
 	}
 	return nil
 }
