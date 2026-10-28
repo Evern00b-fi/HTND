@@ -199,11 +199,10 @@ func stopOnPruningPointUTXOSetMismatch(error) {
 	})
 }
 
-// NewComponentManager returns a new ComponentManager instance.
-// Use Start() to begin all services within this ComponentManager
-func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database, interrupt chan<- struct{}) (
-	*ComponentManager, error,
-) {
+// newConsensusConfig is the node's consensus configuration. --prepare-downgrade uses
+// the same one, so its history deletion follows the node's retention settings.
+func newConsensusConfig(cfg *config.Config) (*consensus.Config, error) {
+
 	dataRetentionDuration, err := checkedDurationFromHours(cfg.DataRetentionHours)
 	if err != nil {
 		return nil, err
@@ -212,13 +211,9 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 	if err != nil {
 		return nil, err
 	}
-	warnAboutPersistentRepairFlags(cfg)
-	// Process-global, like the journal itself: set before consensus is built so the first block
-	// resolved is already recorded.
-	muhashjournal.SetPath(cfg.MuHashJournal)
-
-	consensusConfig := consensus.Config{
+	return &consensus.Config{
 		Params:                            *cfg.ActiveNetParams,
+		PruningDiagnostics:                cfg.PruningDiagnostics,
 		IsArchival:                        cfg.IsArchivalNode,
 		DeletionDepth:                     cfg.DeletionDepth,
 		DataRetentionDuration:             dataRetentionDuration,
@@ -236,6 +231,22 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 		OnDisqualifiedBlockStreak:         recoverFromDisqualifiedBlockStreak,
 		OnDisqualification:                logDisqualification,
 		OnPruningPointUTXOSetMismatch:     stopOnPruningPointUTXOSetMismatch,
+	}, nil
+}
+
+// NewComponentManager returns a new ComponentManager instance.
+// Use Start() to begin all services within this ComponentManager
+func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database, interrupt chan<- struct{}) (
+	*ComponentManager, error,
+) {
+	warnAboutPersistentRepairFlags(cfg)
+	// Process-global, like the journal itself: set before consensus is built so the first block
+	// resolved is already recorded.
+	muhashjournal.SetPath(cfg.MuHashJournal)
+
+	consensusConfig, err := newConsensusConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	mempoolConfig := mempool.DefaultConfig(&consensusConfig.Params)
 	mempoolConfig.MaximumOrphanTransactionCount = cfg.MaxOrphanTxs
@@ -263,7 +274,7 @@ func NewComponentManager(cfg *config.Config, db infrastructuredatabase.Database,
 		return nil, err
 	}
 
-	domain, err := domain.New(&consensusConfig, mempoolConfig, db)
+	domain, err := domain.New(consensusConfig, mempoolConfig, db)
 	if err != nil {
 		return nil, err
 	}

@@ -183,6 +183,8 @@ type Flags struct {
 	EnableAutoExodusExportOnPruning bool           `long:"enable-auto-exodus-export-on-pruning" hidden:"true" description:"After each pruning point movement, asynchronously export an acceptance-data Exodus bundle and log its header commitment comparison. Off by default."`
 	AutoExodusExportDir             string         `long:"auto-exodus-export-dir" hidden:"true" description:"Directory for automatic Exodus exports (default: <appdir>/exodus-auto-export)"`
 	ProtocolVersion                 uint32         `long:"protocol-version" hidden:"true" description:"Use non default p2p protocol version"`
+	PruningDiagnostics              bool           `long:"pruning-diagnostics" description:"Log pruning consensus-lock holds and journal/history deletion phase durations"`
+	PrepareDowngrade                bool           `long:"prepare-downgrade" description:"Prepare the database for an older release, then exit without starting the node: finish and check any unfinished pruning point UTXO update, run every pending history deletion job to its end, write the exact block count in the older release's form, and remove the pruning point UTXO journal. Run it with the node stopped, before installing the older release"`
 	ShutdownOnDisqualifiedStreak    bool           `long:"shutdown-on-disqualified-streak" description:"Stop the process instead of repairing disqualified tip chains after a consecutive streak"`
 
 	// Compound transaction rate limiting flags
