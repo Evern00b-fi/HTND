@@ -48,7 +48,7 @@ func applyDefaultMemoryLimit(
 		MiB = 1024 * 1024
 
 		pebbleDefaultCacheMB = 2048
-		pebbleMinCacheMB     = 64
+		pebbleMinCacheMB     = 1024
 		pebbleMaxCacheMB     = pebbleDefaultCacheMB
 
 		pebbleDefaultAtRAM = 8 * GiB
