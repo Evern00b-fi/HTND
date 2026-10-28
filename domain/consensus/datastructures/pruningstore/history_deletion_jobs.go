@@ -70,13 +70,18 @@ func (ps *pruningStore) StageHistoryDeletionJob(stagingArea *model.StagingArea, 
 
 // HistoryDeletionJobs returns the committed jobs, lowest index first. It reads the
 // database only, so it is safe without the consensus lock.
-func (ps *pruningStore) HistoryDeletionJobs(dbContext model.DBReader) ([]*HistoryDeletionJob, error) {
+func (ps *pruningStore) HistoryDeletionJobs(dbContext model.DBReader) (jobs []*HistoryDeletionJob, err error) {
 	cursor, err := dbContext.Cursor(ps.historyDeletionJobsBucket)
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close()
-	var jobs []*HistoryDeletionJob
+	// First/Next also return false on iteration failure. Close reports that error;
+	// never let recovery or downgrade interpret a partial list as completed work.
+	defer func() {
+		if closeErr := cursor.Close(); err == nil && closeErr != nil {
+			jobs, err = nil, closeErr
+		}
+	}()
 	for ok := cursor.First(); ok; ok = cursor.Next() {
 		key, err := cursor.Key()
 		if err != nil {

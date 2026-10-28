@@ -139,13 +139,18 @@ func (bs *blockStore) initializeCount(dbContext model.DBReader) error {
 }
 
 // countStoredBodies counts the blocks stored in the database.
-func (bs *blockStore) countStoredBodies(dbContext model.DBReader) (uint64, error) {
+func (bs *blockStore) countStoredBodies(dbContext model.DBReader) (count uint64, err error) {
 	cursor, err := dbContext.Cursor(bs.bucket)
 	if err != nil {
 		return 0, err
 	}
-	defer cursor.Close()
-	count := uint64(0)
+	// An exhausted iterator may have stopped on an I/O error. Do not publish or
+	// persist a partial recovery count when Close reports that failure.
+	defer func() {
+		if closeErr := cursor.Close(); err == nil && closeErr != nil {
+			count, err = 0, closeErr
+		}
+	}()
 	for ok := cursor.First(); ok; ok = cursor.Next() {
 		count++
 	}
