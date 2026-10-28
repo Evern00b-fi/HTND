@@ -3,7 +3,9 @@ package consensus
 import (
 	"context"
 	"sync"
+	"time"
 
+	"github.com/HoosatNetwork/HTND/v2/domain/consensus/datastructures/pruningstore"
 	"github.com/HoosatNetwork/HTND/v2/domain/consensus/processes/pruningmanager"
 	"github.com/pkg/errors"
 )
@@ -35,6 +37,7 @@ func (s *consensus) startPruningPointUTXOSetScanner() {
 	scanner.done = make(chan struct{})
 	spawn("pruningPointUTXOSetScanner", func() {
 		defer close(scanner.done)
+		diskWait := diskWaitLog{now: time.Now}
 		for {
 			select {
 			case <-ctx.Done():
@@ -51,6 +54,16 @@ func (s *consensus) startPruningPointUTXOSetScanner() {
 				scanner.onMismatch(err)
 				return
 			}
+			if errors.Is(err, pruningstore.ErrJournalDiskReserve) {
+				if diskWait.refused() {
+					log.Warnf("The pruning point UTXO journal job waits for disk space; it is retried after each block "+
+						"and this is logged at most once per %s: %s", diskWaitLogInterval, err)
+				}
+				continue
+			}
+			if diskWait.resumed() {
+				log.Infof("The pruning point UTXO journal job is no longer waiting for disk space")
+			}
 			if err != nil {
 				log.Errorf("The pruning point UTXO set check failed, and is retried after the next block: %+v", err)
 			}
@@ -58,8 +71,38 @@ func (s *consensus) startPruningPointUTXOSetScanner() {
 	})
 }
 
-// Close stops the pruning point UTXO set check and waits for it to return, so the database can be closed after it. A
-// check it interrupts leaves the update pending, and the next start checks the set again.
+// diskWaitLogInterval bounds how often a job waiting for disk space is logged.
+const diskWaitLogInterval = time.Minute
+
+// diskWaitLog rate-limits the log of a journal job waiting for disk space. The scanner
+// retries it after every block; the refusal is logged at most once per
+// diskWaitLogInterval, and the end of the wait once.
+type diskWaitLog struct {
+	now     func() time.Time
+	last    time.Time
+	waiting bool
+}
+
+// refused reports whether this refusal is logged.
+func (w *diskWaitLog) refused() bool {
+	now := w.now()
+	if w.waiting && now.Sub(w.last) < diskWaitLogInterval {
+		return false
+	}
+	w.waiting, w.last = true, now
+	return true
+}
+
+// resumed reports whether a wait ended with this attempt.
+func (w *diskWaitLog) resumed() bool {
+	ended := w.waiting
+	w.waiting = false
+	return ended
+}
+
+// Close stops the pruning point UTXO set check and the history deletion owner and waits for both to return, so the
+// database can be closed after it. A check it interrupts leaves the update pending, and the next start checks the set
+// again; an interrupted history deletion job keeps its record and resumes at the next start.
 func (s *consensus) Close() {
 	scanner := &s.pruningPointUTXOSetScanner
 	scanner.closeOnce.Do(func() {
@@ -68,4 +111,6 @@ func (s *consensus) Close() {
 			<-scanner.done
 		}
 	})
+	// After the scanner: its finish may still hand the owner a job.
+	s.historyDeletionOwner.close()
 }

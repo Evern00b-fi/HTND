@@ -190,11 +190,24 @@ func (n *pruningMoveNode) restart() {
 	n.node = node
 }
 
-// waitUntilUpdated waits for the pending pruning point UTXO set update to finish: with
-// DeferPruningPointUTXOSetUpdate, its last step runs in the background.
+// waitUntilUpdated waits for the pending pruning point UTXO set update to finish, and for the history deletion its
+// finish recorded: with DeferPruningPointUTXOSetUpdate, both may run in the background.
 func (n *pruningMoveNode) waitUntilUpdated() {
 	n.t.Helper()
-	waitUntil(n.t, "the pending pruning point UTXO set update finished", func() bool { return !n.updating() })
+	waitUntil(n.t, "the pending pruning point UTXO set update finished", func() bool {
+		return !n.updating() && !historyDeletionPending(n.t, n.db, n.dbPrefix)
+	})
+}
+
+// historyDeletionPending reports whether a history deletion job is still recorded.
+func historyDeletionPending(t *testing.T, db database.DataAccessor, dbPrefix *prefix.Prefix) bool {
+	t.Helper()
+	cursor, err := db.Cursor(database.MakeBucket(dbPrefix.Serialize()).Bucket([]byte("history-deletion-jobs")))
+	if err != nil {
+		t.Fatalf("Cursor: %+v", err)
+	}
+	defer cursor.Close()
+	return cursor.First()
 }
 
 func waitUntil(t *testing.T, what string, condition func() bool) {

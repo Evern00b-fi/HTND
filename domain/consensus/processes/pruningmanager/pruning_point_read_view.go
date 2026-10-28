@@ -2,6 +2,7 @@ package pruningmanager
 
 import (
 	"bytes"
+	"context"
 	"math"
 
 	"github.com/HoosatNetwork/HTND/v2/domain/consensus/database"
@@ -58,12 +59,19 @@ func (v *pruningReadView) diff() (externalapi.UTXODiff, string, error) {
 // installed by this capability, and no snapshot survives process restart.
 func (pm *pruningManager) readView(snapshot *database.ReadSnapshot, p model.DBBucket,
 	baseIndex uint64, base, target *externalapi.DomainHash) (*pruningReadView, error) {
-	if snapshot == nil || p == nil || base == nil || target == nil || pm.genesisHash == nil {
+	return pm.readViewWithContext(context.Background(), snapshot, p, baseIndex, base, target)
+}
+
+// readViewWithContext bounds shutdown by checking cancellation during database reads.
+func (pm *pruningManager) readViewWithContext(ctx context.Context, readSnapshot *database.ReadSnapshot, p model.DBBucket,
+	baseIndex uint64, base, target *externalapi.DomainHash) (*pruningReadView, error) {
+	if readSnapshot == nil || p == nil || base == nil || target == nil || pm.genesisHash == nil {
 		return nil, errors.New("incomplete pruning read-view identity")
 	}
 	if baseIndex == math.MaxUint64 || target.Equal(pm.genesisHash) {
 		return nil, errors.New("unsupported pruning read-view transition")
 	}
+	snapshot := cancelableSnapshot{readSnapshot, ctx}
 	// Own the instance path instead of retaining the caller's mutable byte slice.
 	p = database.MakeBucket(bytes.Clone(p.Path()))
 	privatePruning := pruningstore.New(p, 2, false)
