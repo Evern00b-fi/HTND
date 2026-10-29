@@ -185,7 +185,7 @@ func applyDefaultMemoryLimit(
 
 	earlyInfof(
 		" -> System Available: %d MB of %d MB",
-		availableMemory+activePebbleCacheBytes/MiB,
+		(availableMemory+activePebbleCacheBytes)/MiB,
 		v.Total/MiB,
 	)
 }
