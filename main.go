@@ -85,9 +85,12 @@ func applyDefaultMemoryLimit(
 	//
 	// At 8 GiB RAM and above, retain the normal 2 GiB default.
 	// Below 8 GiB, use approximately 12.5% of total RAM.
-	if !explicitPebbleCache {
-		var pebbleCacheMB int
 
+	var activePebbleCacheBytes int64
+
+	if !explicitPebbleCache {
+
+		var pebbleCacheMB int
 		if v.Total >= pebbleDefaultAtRAM {
 			pebbleCacheMB = pebbleDefaultCacheMB
 		} else {
@@ -100,6 +103,7 @@ func applyDefaultMemoryLimit(
 			}
 		}
 
+		activePebbleCacheBytes = int64(pebbleCacheMB) * 1024 * 1024
 		if err := os.Setenv(
 			"HTND_PEBBLE_CACHE_MB",
 			strconv.Itoa(pebbleCacheMB),
@@ -114,9 +118,20 @@ func applyDefaultMemoryLimit(
 				pebbleCacheMB,
 			)
 		}
+	} else { // Explicitly set already
+		if envVal, err := strconv.Atoi(os.Getenv("HTND_PEBBLE_CACHE_MB")); err == nil {
+			activePebbleCacheBytes = int64(envVal) * 1024 * 1024
+		} else {
+			activePebbleCacheBytes = 2048 * 1024 * 1024 // Default
+		}
 	}
 
-	availableMemory := v.Available
+	var availableMemory int64
+	if v.Available > uint64(activePebbleCacheBytes) {
+		availableMemory = int64(v.Available) - activePebbleCacheBytes
+	} else {
+		availableMemory = 0
+	}
 
 	var targetLimit int64
 	var targetGOGC int
