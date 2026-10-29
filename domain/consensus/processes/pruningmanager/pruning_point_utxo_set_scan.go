@@ -52,15 +52,23 @@ func (pm *pruningManager) applyPruningPointUTXOSetDiffAndRequestScan() error {
 // blocks and clears the pending flag in one commit. lock is the consensus lock. It is held only to open the iterator
 // and to finish, not for the walk, which takes minutes on mainnet.
 //
-// The iterator is opened under the lock, so it reads the set as it stood then: every write to the set happens under
-// the lock, so that is a complete set, and later writes are not seen by it. A set that was written again or a pruning
-// point that moved by the time the walk ends makes the result stale. It is dropped, whatever it was, and the current
+// The iterator is opened under the lock. Legacy writers hold that lock; the journal
+// owner instead requires COMPLETE admission and invalidates its generation under the
+// same lock before any off-lock write. Thus an admitted iterator always sees a complete set.
+// A set written again, or a pruning point moved before the walk ends, makes the result stale. It is dropped, whatever it was, and the current
 // set is scanned when its own diff has been written.
 //
 // It returns an error wrapping ErrPruningPointUTXOSetMismatch, with a bounded diagnostic, if the set does not match.
 // Any other error leaves the update pending, and the next UpdatePruningPointIfRequired requests the scan again. If ctx
 // is cancelled, it returns early and leaves the update pending, so the next start scans again.
 func (pm *pruningManager) ScanPruningPointUTXOSet(ctx context.Context, lock sync.Locker) error {
+	if pm.journal != nil {
+		return pm.RunJournalWorker(ctx, lock)
+	}
+	return pm.scanPruningPointUTXOSet(ctx, lock)
+}
+
+func (pm *pruningManager) scanPruningPointUTXOSet(ctx context.Context, lock sync.Locker) (resultErr error) {
 	lock.Lock()
 	pruningPoint, utxoSetIterator, generation, err := pm.openPruningPointUTXOSetScan()
 	lock.Unlock()
@@ -74,6 +82,7 @@ func (pm *pruningManager) ScanPruningPointUTXOSet(ctx context.Context, lock sync
 	})
 	closeErr := utxoSetIterator.Close()
 	stopped := errors.Is(err, errUTXOSetScanStopped)
+
 	if err != nil && !stopped {
 		return err
 	}
@@ -134,6 +143,16 @@ func (pm *pruningManager) openPruningPointUTXOSetScan() (
 	}
 	if pm.appliedUTXOSetDiff == nil || !pm.appliedUTXOSetDiff.pruningPoint.Equal(pruningPoint) {
 		return nil, nil, 0, nil
+	}
+	// COMPLETE is mandatory even if a cached applied diff still names this hash.
+	if pm.journal != nil {
+		state, err := pm.journal.Load()
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if state == nil || state.Phase != "complete" || state.Target != pruningPoint.String() {
+			return nil, nil, 0, nil
+		}
 	}
 	generation := pm.pruningStore.PruningPointUTXOSetGeneration()
 	utxoSetIterator, err := pm.pruningStore.PruningPointUTXOIterator(pm.databaseContext)

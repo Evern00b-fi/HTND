@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"fmt"
+	"github.com/HoosatNetwork/HTND/v2/domain/consensus/processes/pruningmanager"
 	"math"
 	"math/big"
 	"os"
@@ -99,6 +100,9 @@ type consensus struct {
 	// pruningPointUTXOSetScanner hashes the pruning point UTXO set without the lock, then compares its commitment
 	// and finishes the update under the lock, with deferPruningPointUTXOSetUpdate.
 	pruningPointUTXOSetScanner pruningPointUTXOSetScanner
+	// historyDeletionOwner runs the history deletion jobs the pruning point updates record, with
+	// Config.DeferPruningPointUTXOSetUpdate on a backend with read snapshots.
+	historyDeletionOwner historyDeletionOwner
 }
 
 func (s *consensus) exportPruningPointExodusBundle(pruningPoint *externalapi.DomainHash, exportRoot, network string) {
@@ -1242,7 +1246,16 @@ func (s *consensus) ValidateAndInsertImportedPruningPoint(newPruningPoint *exter
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	return s.blockProcessor.ValidateAndInsertImportedPruningPoint(newPruningPoint)
+	// Active local journals and imported-state replacement cannot share a destination.
+	// Staging consensus (without a materialized position) retains the synchronous importer.
+	if pruningmanager.JournalActive(s.pruningManager) {
+		return errors.New("pruning journal: active instance refuses import; use staging consensus")
+	}
+
+	if err := s.blockProcessor.ValidateAndInsertImportedPruningPoint(newPruningPoint); err != nil {
+		return err
+	}
+	return pruningmanager.ResetJournalAfterImport(s.pruningManager)
 }
 
 func (s *consensus) GetVirtualSelectedParent() (*externalapi.DomainHash, error) {
@@ -1437,6 +1450,9 @@ func (s *consensus) ArePruningPointsViolatingFinality(pruningPoints []externalap
 func (s *consensus) ImportPruningPoints(pruningPoints []externalapi.BlockHeader) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if pruningmanager.JournalActive(s.pruningManager) {
+		return errors.New("pruning journal: active instance refuses pruning-list import; use staging consensus")
+	}
 
 	stagingArea := model.NewStagingArea()
 	err := s.consensusStateManager.ImportPruningPoints(stagingArea, pruningPoints)
@@ -2079,7 +2095,14 @@ func (s *consensus) RepairDisqualifiedTipChains() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return s.repairDisqualifiedChains(stagingArea, tips)
+}
 
+// repairDisqualifiedChains is RepairDisqualifiedTipChains from the given chain tips. The
+// caller holds the lock.
+func (s *consensus) repairDisqualifiedChains(stagingArea *model.StagingArea, tips []*externalapi.DomainHash) (
+	uint64, error,
+) {
 	reset := make(map[externalapi.DomainHash]struct{})
 	for _, tip := range tips {
 		current := tip

@@ -20,6 +20,7 @@ type DB struct {
 	cursors     []*DBCursor // Track all cursors
 	mu          sync.Mutex  // Protect cursors slice
 	walDisabled bool
+	directory   string
 }
 
 // OpenPebbleDB opens a Pebble instance defined by the given path, and returns pebble's error when it
@@ -37,7 +38,9 @@ func OpenPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	return observedDB(db, options, metrics), nil
+	observed := observedDB(db, options, metrics)
+	observed.directory = path
+	return observed, nil
 }
 
 // NewPebbleDB opens a Pebble instance defined by the given path. It is meant for the node's own
@@ -74,7 +77,9 @@ func NewPebbleDB(path string, cacheSizeMiB int) (*DB, error) {
 		}
 	}
 
-	return observedDB(db, options, metrics), nil
+	observed := observedDB(db, options, metrics)
+	observed.directory = path
+	return observed, nil
 }
 
 // Compact compacts the Pebble instance (full range).

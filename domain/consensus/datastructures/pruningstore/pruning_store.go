@@ -57,6 +57,7 @@ type pruningStore struct {
 	importedPruningPointMultisetKey    model.DBKey
 	pruningPointByIndexBucket          model.DBBucket
 	lastPruningTimeKey                 model.DBKey
+	historyDeletionJobsBucket          model.DBBucket
 
 	lastUTXODebugCheckedPruningPointKey   model.DBKey
 	lastUTXODebugReproducedRootHashKey    model.DBKey
@@ -77,6 +78,7 @@ func New(prefixBucket model.DBBucket, cacheSize int, preallocate bool) model.Pru
 		importedPruningPointMultisetKey:    prefixBucket.Key(importedPruningPointMultisetKeyName),
 		pruningPointByIndexBucket:          prefixBucket.Bucket(pruningPointByIndexBucketName),
 		lastPruningTimeKey:                 prefixBucket.Key(lastPruningTimeKeyName),
+		historyDeletionJobsBucket:          prefixBucket.Bucket(historyDeletionJobsBucketName),
 
 		lastUTXODebugCheckedPruningPointKey:   prefixBucket.Key(lastUTXODebugCheckedPruningPointKeyName),
 		lastUTXODebugReproducedRootHashKey:    prefixBucket.Key(lastUTXODebugReproducedRootHashKeyName),
