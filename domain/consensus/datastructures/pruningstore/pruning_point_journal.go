@@ -525,8 +525,6 @@ func (j *Journal) Apply(ctx context.Context, s *JournalState) error {
 		if s.Phase == "complete" {
 			j.hit("complete")
 		}
-		if s.Phase == "complete" {
-		}
 	}
 	return nil
 }

@@ -17,7 +17,11 @@ func TestPruningDiagnosticsDefaultHasNoDecorator(t *testing.T) {
 		t.Fatal("diagnostics did not install a locker")
 	}
 	got.Lock()
+	held := !lock.TryLock()
 	got.Unlock()
+	if !held {
+		t.Fatal("diagnostics did not acquire consensus ownership")
+	}
 	if !lock.TryLock() {
 		t.Fatal("diagnostics did not release consensus ownership")
 	}
