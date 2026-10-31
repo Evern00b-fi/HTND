@@ -14,7 +14,7 @@ import (
 // resolveCandidateTips returns the DAG tips with every disqualified tip replaced as calculateNewTips replaces it. A tip
 // ResolveVirtual disqualifies stays in the stored tips until the next block is added, and it would hide the valid blocks
 // below it: virtual's next pending tip would be a lighter one, and the completely resolved path picks virtual's parents
-// only from tips no heavier than that.
+// only from tips no heavier than that. RecomputeVirtual picks virtual's parents from the same set.
 func (csm *consensusStateManager) resolveCandidateTips(stagingArea *model.StagingArea) ([]*externalapi.DomainHash, error) {
 	tips, err := csm.consensusStateStore.Tips(stagingArea, csm.databaseContext)
 	if err != nil {
@@ -211,7 +211,7 @@ func (csm *consensusStateManager) RecomputeVirtual() error {
 	defer onEnd()
 
 	readStagingArea := model.NewStagingArea()
-	tips, err := csm.consensusStateStore.Tips(readStagingArea, csm.databaseContext)
+	tips, err := csm.resolveCandidateTips(readStagingArea)
 	if err != nil {
 		return err
 	}
