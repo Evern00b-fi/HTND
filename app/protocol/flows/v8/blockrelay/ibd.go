@@ -1305,6 +1305,10 @@ func (flow *handleIBDFlow) checkPeriodicRate(itemType string) error {
 
 	_ = minRate // In case we bring it back later
 
+	// Only for debug purposes
+	log.Infof("IBD processed %.2f %s/sec , low rate count: %d", rate, itemType, flow.consecutiveLowRateCount)
+
+	/*
 	if itemType == "headers" {
 		rate = float64(flow.headersProcessedSinceLast) / elapsed
 		minRate = flow.minHeadersPerSecond
@@ -1313,9 +1317,6 @@ func (flow *handleIBDFlow) checkPeriodicRate(itemType string) error {
 		minRate = flow.minBlocksPerSecond
 	}
 
-	// Only for debug purposes
-	log.Infof("IBD processed %.2f %s/sec , low rate count: %d", rate, itemType, flow.consecutiveLowRateCount)
-	/*
 		if rate < minRate {
 			flow.consecutiveLowRateCount++
 			log.Warnf("IBD processed %.2f %s/sec (below %.2f), low rate count: %d", rate, itemType, minRate, flow.consecutiveLowRateCount)
