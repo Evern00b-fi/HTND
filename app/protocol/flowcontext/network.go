@@ -52,12 +52,15 @@ func (f *FlowContext) AddToPeers(peer *peerpkg.Peer) error {
 	return nil
 }
 
-// RemoveFromPeers remove this peer from the peers list.
+// RemoveFromPeers remove this peer from the peers list. An entry that a newer connection of the same peer has added
+// since is left alone: the old connection removes its peer once more after its flows have returned.
 func (f *FlowContext) RemoveFromPeers(peer *peerpkg.Peer) {
 	f.peersMutex.Lock()
 	defer f.peersMutex.Unlock()
 
-	delete(f.peers, *peer.ID())
+	if f.peers[*peer.ID()] == peer {
+		delete(f.peers, *peer.ID())
+	}
 }
 
 // readyPeerConnections returns the NetConnections of all the ready peers except excluded, which may be nil.
