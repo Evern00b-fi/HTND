@@ -367,10 +367,12 @@ func (h *staleRootHarness) check(step string) {
 // TestResolveVirtualKeepsOneUTXODiffRootOverDisqualifiedSelectedParent is the original failing sequence. Virtual is on a
 // heavy chain A; a lighter branch B is UTXO-valid and spends a coin A does not. A gets an invalid block and a valid child,
 // left pending as IBD leaves them, and the chunked resolve disqualifies them one at a time, making each disqualified
-// processing point virtual's selected parent. The next ResolveVirtual moves virtual onto B's tip, whose diff was
-// relative to A, not to virtual. Before the fix B's diff was read as virtual-relative and the last disqualified
-// processing point was left as a second root, so A's past lost the coin that only B spent and a block on A spending it
-// was disqualified.
+// processing point virtual's selected parent. Before the fix the next ResolveVirtual moved virtual onto B's tip, whose
+// diff was relative to A, not to virtual; B's diff was read as virtual-relative and the last disqualified processing
+// point was left as a second root, so A's past lost the coin that only B spent and a block on A spending it was
+// disqualified. Since virtual falls back to the valid parents of a disqualified tip, the resolve ends on A's tip, whose
+// diff is relative to the disqualified processing point; TestResolveVirtualMovesOntoValidBranchTipWithDiffChild keeps
+// the move onto another branch's tip covered.
 func TestResolveVirtualKeepsOneUTXODiffRootOverDisqualifiedSelectedParent(t *testing.T) {
 	h := newStaleRootHarness(t, "TestStaleRootDisqualifiedSelectedParent")
 	h.check("genesis")
@@ -420,6 +422,7 @@ func TestResolveVirtualKeepsOneUTXODiffRootOverDisqualifiedSelectedParent(t *tes
 			t.Fatalf("status of %s is %s, expected %s", hash, got, want)
 		}
 	}
+	h.expectSelectedParent("resolved", aTip)
 
 	aSpend := h.insert(h.build([]*externalapi.DomainHash{aTip}, []*externalapi.DomainTransaction{spendCoin}, false), true)
 	if status := blockStatus(t, h.tc, aSpend); status != externalapi.StatusUTXOValid {
@@ -435,8 +438,9 @@ func TestResolveVirtualKeepsOneUTXODiffRootOverDisqualifiedSelectedParent(t *tes
 // TestBlockInsertionKeepsOneUTXODiffRootOverInteriorProcessingPoint is the block-insertion trigger: a block submitted
 // with updateVirtual while the chunked resolve has left virtual on a valid interior processing point Q of a pending
 // chain A, and B's tip has Q as its diff child. Inserting the block first drains the rest of the resolve
-// (ValidateAndInsertBlock), which disqualifies A from an invalid block on and then moves virtual onto B's tip, whose
-// diff is relative to Q.
+// (ValidateAndInsertBlock), which disqualifies A from an invalid block on and then moves virtual onto A's last valid
+// block, whose diff is relative to Q. (Before virtual fell back to the valid parents of a disqualified tip, it moved onto
+// B's lighter tip instead, whose diff is relative to Q too.)
 func TestBlockInsertionKeepsOneUTXODiffRootOverInteriorProcessingPoint(t *testing.T) {
 	h := newStaleRootHarness(t, "TestStaleRootInteriorProcessingPoint")
 
@@ -469,8 +473,9 @@ func TestBlockInsertionKeepsOneUTXODiffRootOverInteriorProcessingPoint(t *testin
 	h.insert(h.build([]*externalapi.DomainHash{aAbove}, nil, false), true)
 	sp := virtualSelectedParent(t, h.tc)
 	t.Logf("after the insertion: virtual selected parent %s (%s)", sp, blockStatus(t, h.tc, sp))
-	if !sp.Equal(bTip) {
-		t.Fatalf("expected virtual's selected parent to be B's tip %s, the only tip left, got %s", bTip, sp)
+	if !sp.Equal(aLastValid) {
+		t.Fatalf("expected virtual's selected parent to be A's last valid block %s, heavier than B's tip %s, got %s",
+			aLastValid, bTip, sp)
 	}
 	h.check("block inserted over the interior processing point")
 
@@ -494,10 +499,10 @@ func TestBlockInsertionKeepsOneUTXODiffRootOverInteriorProcessingPoint(t *testin
 // TestAddBlockKeepsOneUTXODiffRootWhenVirtualLeavesValidSelectedParent is the AddBlock path with a UTXO-valid previous
 // selected parent and nothing pending, so neither findNextPendingTip nor ResolveVirtual is involved. Virtual is on A's
 // tip, and B's tip is UTXO-valid with a diff relative to A. A child of A's tip arrives with updateVirtual and is
-// disqualified. calculateNewTips keeps neither the disqualified block nor its parent as a tip, so pickVirtualParents
-// moves virtual onto B's tip. Before the fix B's diff was read as virtual-relative and A's tip stayed a second root, so
-// a block on A spending the coin only B spent was disqualified. A fix confined to ResolveVirtual leaves this path open:
-// the guard in updateSelectedTipUTXODiff then refuses the block instead.
+// disqualified. calculateNewTips used to keep neither the disqualified block nor its parent as a tip, so
+// pickVirtualParents moved virtual onto B's tip; before the #56 fix B's diff was read as virtual-relative and A's tip
+// stayed a second root, so a block on A spending the coin only B spent was disqualified. Since A's tip stays a tip in
+// place of its disqualified child, virtual stays on A's tip, and the block on A must still be valid.
 func TestAddBlockKeepsOneUTXODiffRootWhenVirtualLeavesValidSelectedParent(t *testing.T) {
 	h := newStaleRootHarness(t, "TestStaleRootAddBlockValidSelectedParent")
 
@@ -526,6 +531,7 @@ func TestAddBlockKeepsOneUTXODiffRootWhenVirtualLeavesValidSelectedParent(t *tes
 	t.Logf("after the disqualified block: virtual selected parent %s (%s), B's tip %s", sp, blockStatus(t, h.tc, sp),
 		bTip)
 	h.check("disqualified child of A's tip")
+	h.expectSelectedParent("disqualified child of A's tip", aTip)
 
 	aSpend := h.insert(h.build([]*externalapi.DomainHash{aTip}, []*externalapi.DomainTransaction{spendCoin}, false), true)
 	if status := blockStatus(t, h.tc, aSpend); status != externalapi.StatusUTXOValid {
@@ -599,15 +605,30 @@ func TestResolveVirtualAfterDisqualifiedChunkCommittedWithoutVirtualUpdate(t *te
 func TestUTXODiffRootInvariantOnRandomDAGs(t *testing.T) {
 	for _, seed := range []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20} {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
-			randomStaleRootScenario(t, seed, 50)
+			randomStaleRootScenario(t, seed, 50, false)
 		})
 	}
 }
 
-func randomStaleRootScenario(t *testing.T, seed int64, blockCount int) {
+// randomStaleRootScenario with checkSelectedParent also allows invalid blocks from the first block on and asserts, after
+// every insertion that updates virtual and every completed ResolveVirtual, that virtual's selected parent is
+// heaviestValidBlock over all blocks and that no virtual parent is disqualified. Without it the random stream is
+// unchanged.
+func randomStaleRootScenario(t *testing.T, seed int64, blockCount int, checkSelectedParent bool) {
 	random := rand.New(rand.NewSource(seed))
-	h := newStaleRootHarness(t, fmt.Sprintf("TestStaleRootRandom_%d", seed))
+	name := fmt.Sprintf("TestStaleRootRandom_%d", seed)
+	if checkSelectedParent {
+		name = fmt.Sprintf("TestDisqualifiedTipParentsRandom_%d", seed)
+	}
+	h := newStaleRootHarness(t, name)
 	all := []*externalapi.DomainHash{h.genesis}
+	checkReference := func(step string) {
+		if !checkSelectedParent {
+			return
+		}
+		h.expectSelectedParent(step, h.heaviestValidBlock(all))
+		h.expectNoDisqualifiedVirtualParent(step)
+	}
 	coinbases := []*externalapi.DomainHash{}
 	// Coverage counters, logged at the end: how often virtual left its own selected chain (a reorg, or a move onto
 	// a lighter block), which is when the previous selected parent has to be re-pointed.
@@ -652,9 +673,9 @@ func randomStaleRootScenario(t *testing.T, seed int64, blockCount int) {
 				transactions = append(transactions, h.spend(transaction, index))
 			}
 		}
-		// No invalid block among the first few: one on genesis's only chain leaves no UTXO-valid tip, which this
-		// node handles separately (FindHighestValidBlock) and which is not what this test is about.
-		overpay := i >= 4 && random.Intn(15) == 0
+		// No invalid block among the first few unless checkSelectedParent: one on genesis's only chain left no tip
+		// before virtual fell back to the disqualified block's valid parents.
+		overpay := (i >= 4 || checkSelectedParent) && random.Intn(15) == 0
 		block, err := h.tryBuild(parents, transactions, overpay)
 		if err != nil {
 			transactions, overpay = nil, false
@@ -673,6 +694,9 @@ func randomStaleRootScenario(t *testing.T, seed int64, blockCount int) {
 		}
 		h.check(fmt.Sprintf("seed %d block %d (updateVirtual=%t, overpay=%t, %d spends)", seed, i, updateVirtual,
 			overpay, len(transactions)))
+		if updateVirtual {
+			checkReference(fmt.Sprintf("seed %d block %d", seed, i))
+		}
 
 		if random.Intn(3) == 0 {
 			chunk := []uint64{0, 1, 2, 3, 5}[random.Intn(5)]
@@ -681,6 +705,9 @@ func randomStaleRootScenario(t *testing.T, seed int64, blockCount int) {
 				virtualSelectedParent(t, h.tc))
 			noteMove()
 			h.check(fmt.Sprintf("seed %d after block %d: ResolveVirtual(%d)", seed, i, chunk))
+			if complete {
+				checkReference(fmt.Sprintf("seed %d after block %d: ResolveVirtual(%d)", seed, i, chunk))
+			}
 		}
 	}
 	for step := 1; !h.resolve(2); step++ {
@@ -691,6 +718,7 @@ func randomStaleRootScenario(t *testing.T, seed int64, blockCount int) {
 		noteMove()
 	}
 	h.check(fmt.Sprintf("seed %d resolved", seed))
+	checkReference(fmt.Sprintf("seed %d resolved", seed))
 	noteMove()
 
 	disqualified := 0

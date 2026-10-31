@@ -11,8 +11,37 @@ import (
 	"github.com/pkg/errors"
 )
 
-func (csm *consensusStateManager) tipsInDecreasingGHOSTDAGParentSelectionOrder(stagingArea *model.StagingArea) ([]*externalapi.DomainHash, error) {
+// resolveCandidateTips returns the DAG tips with every disqualified tip replaced as calculateNewTips replaces it. A tip
+// ResolveVirtual disqualifies stays in the stored tips until the next block is added, and it would hide the valid blocks
+// below it: virtual's next pending tip would be a lighter one, and the completely resolved path picks virtual's parents
+// only from tips no heavier than that.
+func (csm *consensusStateManager) resolveCandidateTips(stagingArea *model.StagingArea) ([]*externalapi.DomainHash, error) {
 	tips, err := csm.consensusStateStore.Tips(stagingArea, csm.databaseContext)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]*externalapi.DomainHash, 0, len(tips))
+	var disqualifiedTips []*externalapi.DomainHash
+	for _, tip := range tips {
+		status, err := csm.blockStatusStore.Get(csm.databaseContext, stagingArea, tip)
+		if err != nil && !database.IsNotFoundError(err) {
+			return nil, err
+		}
+		if err == nil && status == externalapi.StatusDisqualifiedFromChain {
+			disqualifiedTips = append(disqualifiedTips, tip)
+			continue
+		}
+		candidates = append(candidates, tip) // a tip without a status is left to the callers, as before
+	}
+	candidates, err = csm.appendAncestorsCoveredOnlyByDisqualified(stagingArea, candidates, disqualifiedTips)
+	if err != nil {
+		return nil, err
+	}
+	return csm.dropTipsInPastOfOtherTips(stagingArea, candidates)
+}
+
+func (csm *consensusStateManager) tipsInDecreasingGHOSTDAGParentSelectionOrder(stagingArea *model.StagingArea) ([]*externalapi.DomainHash, error) {
+	tips, err := csm.resolveCandidateTips(stagingArea)
 	if err != nil {
 		return nil, err
 	}
@@ -146,12 +175,9 @@ func (csm *consensusStateManager) findNextPendingTip(stagingArea *model.StagingA
 
 // getGHOSTDAGLowerTips returns the set of tips which are lower in GHOSTDAG parent selection order than `pendingTip`. i.e.,
 // they can be added to virtual parents but `pendingTip` will remain the virtual selected parent
-func (csm *consensusStateManager) getGHOSTDAGLowerTips(stagingArea *model.StagingArea, pendingTip *externalapi.DomainHash) ([]*externalapi.DomainHash, error) {
-	tips, err := csm.consensusStateStore.Tips(stagingArea, csm.databaseContext)
-	if err != nil {
-		return nil, err
-	}
-
+func (csm *consensusStateManager) getGHOSTDAGLowerTips(stagingArea *model.StagingArea, pendingTip *externalapi.DomainHash,
+	tips []*externalapi.DomainHash,
+) ([]*externalapi.DomainHash, error) {
 	lowerTips := []*externalapi.DomainHash{pendingTip}
 	for _, tip := range tips {
 		if tip.Equal(pendingTip) {
@@ -364,7 +390,21 @@ func (csm *consensusStateManager) ResolveVirtual(maxBlocksToResolve uint64) (*ex
 	virtualParents := []*externalapi.DomainHash{processingPoint}
 	// If `isCompletelyResolved`, set virtual correctly with all tips which have less blue work than pending
 	if isCompletelyResolved {
-		lowerTips, err := csm.getGHOSTDAGLowerTips(readStagingArea, pendingTip)
+		candidateTips, err := csm.resolveCandidateTips(readStagingArea)
+		if err != nil {
+			return nil, false, err
+		}
+		// Store the candidate tips, so the tips no longer hold a disqualified tip that hides the valid blocks below it:
+		// the consensus-level ResolveVirtual checks the stored tips for a usable one once resolving is done, and with a
+		// disqualified tip on top of the only chain there would be none.
+		storedTips, err := csm.consensusStateStore.Tips(readStagingArea, csm.databaseContext)
+		if err != nil {
+			return nil, false, err
+		}
+		if !sameParentSet(storedTips, candidateTips) {
+			csm.consensusStateStore.StageTips(updateVirtualStagingArea, candidateTips)
+		}
+		lowerTips, err := csm.getGHOSTDAGLowerTips(readStagingArea, pendingTip, candidateTips)
 		if err != nil {
 			return nil, false, err
 		}
