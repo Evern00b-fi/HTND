@@ -1309,24 +1309,24 @@ func (flow *handleIBDFlow) checkPeriodicRate(itemType string) error {
 	log.Infof("IBD processed %.2f %s/sec , low rate count: %d", rate, itemType, flow.consecutiveLowRateCount)
 
 	/*
-	if itemType == "headers" {
-		rate = float64(flow.headersProcessedSinceLast) / elapsed
-		minRate = flow.minHeadersPerSecond
-	} else {
-		rate = float64(flow.blocksProcessedSinceLast) / elapsed
-		minRate = flow.minBlocksPerSecond
-	}
-
-		if rate < minRate {
-			flow.consecutiveLowRateCount++
-			log.Warnf("IBD processed %.2f %s/sec (below %.2f), low rate count: %d", rate, itemType, minRate, flow.consecutiveLowRateCount)
-			if flow.consecutiveLowRateCount >= flow.slowIBDTicks {
-				log.Warnf("IBD PEER STUCK -  sent low %s rate for %d ticks, DISCONNECTING", itemType, flow.slowIBDTicks)
-				return flow.disconnectPeerDueToLowRate()
-			}
+		if itemType == "headers" {
+			rate = float64(flow.headersProcessedSinceLast) / elapsed
+			minRate = flow.minHeadersPerSecond
 		} else {
-			flow.consecutiveLowRateCount = 0 // Reset on good rate
+			rate = float64(flow.blocksProcessedSinceLast) / elapsed
+			minRate = flow.minBlocksPerSecond
 		}
+
+			if rate < minRate {
+				flow.consecutiveLowRateCount++
+				log.Warnf("IBD processed %.2f %s/sec (below %.2f), low rate count: %d", rate, itemType, minRate, flow.consecutiveLowRateCount)
+				if flow.consecutiveLowRateCount >= flow.slowIBDTicks {
+					log.Warnf("IBD PEER STUCK -  sent low %s rate for %d ticks, DISCONNECTING", itemType, flow.slowIBDTicks)
+					return flow.disconnectPeerDueToLowRate()
+				}
+			} else {
+				flow.consecutiveLowRateCount = 0 // Reset on good rate
+			}
 	*/
 
 	// Reset for next interval
