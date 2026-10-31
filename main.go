@@ -153,7 +153,7 @@ func applyDefaultMemoryLimit(
 		targetGOGC = 100
 
 	case availableMemory < 32*GiB:
-		targetLimit = 16 * GiB
+		targetLimit = 12 * GiB
 		if targetLimit > int64(float64(availableMemory)*0.85) {
 			targetLimit = int64(float64(availableMemory) * 0.85)
 		}
