@@ -1302,6 +1302,9 @@ func (flow *handleIBDFlow) checkPeriodicRate(itemType string) error {
 
 	var rate float64
 	var minRate float64
+
+	_ = minRate // In case we bring it back later
+
 	if itemType == "headers" {
 		rate = float64(flow.headersProcessedSinceLast) / elapsed
 		minRate = flow.minHeadersPerSecond
