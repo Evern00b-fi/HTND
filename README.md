@@ -7,6 +7,7 @@ Hoosat Network Daemon is the reference full node implementation for Hoosat Netwo
 
 ## CONTRIBUTING
 
+
 - All contributions via well formed Pull Requests against the master branch or current development branch are welcome.  Please ensure that each PR only deals with a single issue.
 - No other submission mechanism will be considered.
 - If you identify an issue, but are not a developer, then please raise it as an issue here on GitHub.
