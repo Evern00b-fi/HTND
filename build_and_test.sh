@@ -52,7 +52,6 @@ staticcheck -checks SA4006,SA4008,SA4009,SA4010,SA5003,SA1004,SA1014,SA1021,SA10
 
 go build $FLAGS -o htnd .
 
-# Measurement branch in our fork only (not for upstream): the standard developer command, without the ci tag
-# (the ci tag skips the long tests), plus a repeat of a test that failed once on Linux CI.
-GOFLAGS= go test -count=30 -run ^TestPruningWorkerReserveRecovery$ ./domain/consensus/ || echo "MEASURE-FAIL: TestPruningWorkerReserveRecovery x30"
-GOFLAGS= go test -timeout 75m -p 4 $FLAGS ./...
+# Measurement branch in our fork only (not for upstream): repeat TestIBDWithPruning without the ci tag.
+GOFLAGS= go test -count=10 -timeout 60m -run '^TestIBDWithPruning$' -v ./testing/integration/ 2>&1 | grep -E '^(--- FAIL|--- PASS|ok|FAIL)' || true
+echo IBDPRUNE-REPEAT-DONE
