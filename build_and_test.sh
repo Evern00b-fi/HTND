@@ -52,11 +52,11 @@ staticcheck -checks SA4006,SA4008,SA4009,SA4010,SA5003,SA1004,SA1014,SA1021,SA10
 
 go build $FLAGS -o htnd .
 
-# Foztor - it's going to take a while to fix the tests up...
-# if [ -n "${NO_PARALLEL}" ]
-# then
-  # go test -timeout 40m -p 1 -parallel=1 $FLAGS ./...
-# else
-  # # Cap package parallelism to keep memory under control on GHA runners
-  # go test -timeout 40m -p 4 $FLAGS ./...
-# fi
+# Measurement branch in our fork only (not for upstream): run the full test suite on the CI matrix.
+if [ -n "${NO_PARALLEL}" ]
+then
+  go test -timeout 40m -p 1 -parallel=1 $FLAGS ./...
+else
+  # Cap package parallelism to keep memory under control on GHA runners
+  go test -timeout 40m -p 4 $FLAGS ./...
+fi
